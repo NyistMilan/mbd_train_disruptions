@@ -147,6 +147,7 @@ master = master.withColumn("year", F.year("service_date"))
 (
     master.write
     .mode("overwrite")
+    .option("compression", "snappy")
     .partitionBy("year")
     .parquet(MASTER_OUT)
 )
