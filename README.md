@@ -55,3 +55,6 @@ create_master_data.py:
 spark-submit --deploy-mode cluster --driver-memory 6g --executor-memory 6g --conf spark.dynamicAllocation.maxExecutors=15 src/create_master_data.py
 ```
 
+## ER Diagram
+
+![raw_layer](imgs/raw_er.png)
