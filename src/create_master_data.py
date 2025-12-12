@@ -59,6 +59,8 @@ services = (
     .withColumn("stop_arrival_ts", F.to_timestamp("stop_arrival_time"))
     .withColumn("stop_departure_ts", F.to_timestamp("stop_departure_time"))
     .withColumn("stop_event_ts", F.coalesce(F.col("stop_departure_ts"), F.col("stop_arrival_ts")))
+    .withColumn("year", F.year("service_date"))
+    .withColumn("month", F.month("service_date"))
 )
 
 # Clean Stations
@@ -142,12 +144,10 @@ master = (
     .drop("station_code")
 )
 
-master = master.withColumn("year", F.year("service_date"))
-
 (
     master.write
     .mode("overwrite")
     .option("compression", "snappy")
-    .partitionBy("year")
+    .partitionBy("year", "month")
     .parquet(MASTER_OUT)
 )
