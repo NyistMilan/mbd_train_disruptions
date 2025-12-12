@@ -15,7 +15,7 @@ STATIONS_URL = "https://www.rijdendetreinen.nl/en/open-data/stations"
 STATION_DISTANCES_URL = "https://www.rijdendetreinen.nl/en/open-data/station-distances"
 
 RAW_DIR = "data/raw"
-HDFS_DIR = "" #final_project/data/raw
+HDFS_DIR = ""       # final_project/data/raw
 
 TRAIN_YEAR_MIN = 2019
 
