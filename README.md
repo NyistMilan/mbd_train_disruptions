@@ -22,7 +22,7 @@ What factors drive delays in the Dutch railway system, and to what extent can th
 1. Clone this repository:
 
 ```
-git clone https://github.com NyistMilan/mbd_train_disruptions.git
+git clone https://github.com/NyistMilan/mbd_train_disruptions.git
     
 cd mbd_train_disruptions
 ```
