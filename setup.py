@@ -12,5 +12,11 @@ setup(
     install_requires=[
         'requests',
         'beautifulsoup4',
+        'pandas',
+        'xarray',
+        'pyarrow',
+        'fastparquet',
+        'aiohttp',
+        'asyncio', 
     ]
 )
