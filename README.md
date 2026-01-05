@@ -58,3 +58,22 @@ spark-submit --deploy-mode cluster --driver-memory 6g --executor-memory 6g --con
 ## ER Diagram
 
 ![raw_layer](imgs/raw_er.png)
+
+## Weather Data Structure
+
+| Column |	Description |
+|--------|----------------|
+T	| Air temperature (0.1 °C)
+T10N	| Min temp at 10cm
+TD	| Dew point
+U, RH	| Relative humidity (%)
+DR	| Precipitation duration
+DD	| Wind direction (degrees)
+FF, FH	| Wind speed (0.1 m/s)
+FX	| Max wind gust
+VV	| Visibility
+N	| Cloud cover (octants)
+WW	| Weather code
+P	| Air pressure
+SQ	| Sunshine duration
+Q	| Global radiation
