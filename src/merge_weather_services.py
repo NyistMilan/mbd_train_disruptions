@@ -6,9 +6,9 @@ from pyspark.sql.window import Window
 RAW_BASE = "/user/s3692612/final_project/data/raw"
 MASTER_BASE = "/user/s3692612/final_project/data/master"
 WEATHER_PATH = f"{RAW_BASE}/weather/*"
-STATIONS_PATH = f"{RAW_BASE}/stations/*"
+STATIONS_PATH = "/user/s3544648/final_project/data/raw/stations_consolidated/*"
 SERVICES_PATH = MASTER_BASE  # Master data is directly here with year partitions
-OUTPUT_PATH = f"final_project/data/master/services_with_weather"
+OUTPUT_PATH = "final_project/data/master/services_with_weather"
 
 # Weather columns to keep (most relevant for delay analysis)
 # Based on actual KNMI data schema
@@ -77,7 +77,7 @@ def haversine_distance_km(lat1, lon1, lat2, lon2):
 print("Loading train stations data...")
 stations = (
     spark.read.option("header", True)
-    .csv(STATIONS_PATH)
+    .parquet(STATIONS_PATH)
     .withColumnRenamed("code", "station_code")
     .withColumnRenamed("geo_lat", "station_lat")
     .withColumnRenamed("geo_lng", "station_lng")
@@ -206,6 +206,18 @@ if "stop_event_ts" not in services.columns:
         "stop_event_ts", F.coalesce(col("stop_departure_ts"), col("stop_arrival_ts"))
     )
 
+# filter out records without stop_event_ts
+
+# number of records before filtering
+initial_count = services.count()
+
+print(f"Initial services record count: {initial_count}")
+
+print("Filtering services without stop_event_ts...")
+
+services = services.filter(col("stop_event_ts").isNotNull())
+filtered_count = services.count()
+print(f"Filtered services record count: {filtered_count} (removed {initial_count - filtered_count})")
 # Extract date and hour for weather matching
 services = services.withColumn(
     "service_weather_date", F.to_date("stop_event_ts")
