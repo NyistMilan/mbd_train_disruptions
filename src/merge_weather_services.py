@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import broadcast, col
+from pyspark.sql.functions import broadcast, col, radians, sin, cos, sqrt, atan2
 from pyspark.sql.window import Window
 
 # === Configuration ===
@@ -8,7 +8,7 @@ MASTER_BASE = "/user/s3692612/final_project/data/master"
 WEATHER_PATH = f"{RAW_BASE}/weather/*"
 STATIONS_PATH = f"{RAW_BASE}/stations/*"
 SERVICES_PATH = MASTER_BASE  # Master data is directly here with year partitions
-OUTPUT_PATH = f"{MASTER_BASE}/services_with_weather"
+OUTPUT_PATH = f"final_project/data/master/services_with_weather"
 
 # Weather columns to keep (most relevant for delay analysis)
 # Based on actual KNMI data schema
@@ -58,6 +58,19 @@ spark = (
 def euclidean_distance_squared(lat1, lon1, lat2, lon2):
     """Squared Euclidean distance - sufficient for finding nearest station in NL."""
     return (lat1 - lat2) ** 2 + (lon1 - lon2) ** 2
+
+
+def haversine_distance_km(lat1, lon1, lat2, lon2):
+    EARTH_RADIUS_KM = 6371.0
+    lat1_rad = radians(lat1)
+    lat2_rad = radians(lat2)
+    lon1_rad = radians(lon1)
+    lon2_rad = radians(lon2)
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return c * EARTH_RADIUS_KM
 
 
 # === Load Data ===
@@ -163,10 +176,17 @@ station_to_weather = (
         "stationname",
         "weather_lat",
         "weather_lng",
-        "distance_sq",
     )
-    # Convert squared distance to approximate km (1 degree ~ 111km at NL latitude)
-    .withColumn("distance_approx_km", F.sqrt(col("distance_sq")) * 111)
+    # Calculate actual distance in km using Haversine formula
+    .withColumn(
+        "distance_km",
+        haversine_distance_km(
+            col("station_lat"),
+            col("station_lng"),
+            col("weather_lat"),
+            col("weather_lng"),
+        ),
+    )
 )
 
 print("Station to weather station mapping sample:")
@@ -193,15 +213,16 @@ services = services.withColumn(
 
 # Add weather station mapping to services based on stop_station_code
 print("Joining services with station-to-weather mapping...")
-services_with_mapping = services.join(
-    broadcast(
-        station_to_weather.select(
-            "station_code", "weather_station", "distance_approx_km"
-        )
-    ),
-    services["stop_station_code"] == station_to_weather["station_code"],
-    "left",
+station_mapping = station_to_weather.select(
+    col("station_code").alias("mapped_station_code"),
+    col("weather_station"),
+    col("distance_km").alias("weather_station_distance_km"),
 )
+services_with_mapping = services.join(
+    broadcast(station_mapping),
+    services["stop_station_code"] == station_mapping["mapped_station_code"],
+    "left",
+).drop("mapped_station_code")
 
 # Prepare weather data for hourly join
 # Drop metadata columns, keep weather measurements
@@ -211,7 +232,7 @@ weather_measurement_cols = [
     if c not in ["station", "stationname", "lat", "lon", "time"]
 ]
 weather_hourly = weather.select(
-    col("weather_station"),
+    col("weather_station").alias("w_station"),
     col("weather_date"),
     col("weather_hour"),
     *[col(c) for c in weather_measurement_cols if c in weather.columns],
@@ -223,30 +244,48 @@ print("Joining services with weather data...")
 # Join on weather station ID and time (date + hour)
 services_with_weather = services_with_mapping.join(
     weather_hourly,
-    (services_with_mapping["weather_station"] == weather_hourly["weather_station"])
+    (services_with_mapping["weather_station"] == weather_hourly["w_station"])
     & (services_with_mapping["service_weather_date"] == weather_hourly["weather_date"])
     & (services_with_mapping["service_weather_hour"] == weather_hourly["weather_hour"]),
     "left",
-).drop(weather_hourly["weather_station"])
+).drop("w_station")
 
 # Drop temporary columns
 services_with_weather = services_with_weather.drop(
     "service_weather_date", "service_weather_hour", "weather_date", "weather_hour"
 )
 
-# Rename columns for clarity
-services_with_weather = services_with_weather.withColumnRenamed(
-    "distance_approx_km", "weather_station_distance_km"
-)
-
 print("Sample of services with weather data:")
-# TODO : join was not working properly, need to debug
-services_with_weather.show(5, truncate=False)
+services_with_weather.select(
+    "stop_station_code", "weather_station", "weather_station_distance_km",
+    "stop_event_ts", "T", "FF", "DR", "VV"
+).show(100, truncate=False)
 
-print(f"Total services records: {services_with_weather.count()}")
-print(
-    f"Records with weather data: {services_with_weather.filter(col('weather_station').isNotNull()).count()}"
+# === Diagnostics: Check unmatched records ===
+total_count = services_with_weather.count()
+
+# Check if ANY weather column has data (not just T)
+weather_data_condition = (
+    col("T").isNotNull() | col("FF").isNotNull() | col("DR").isNotNull() |
+    col("VV").isNotNull() | col("P").isNotNull() | col("U").isNotNull() |
+    col("DD").isNotNull() | col("FX").isNotNull() | col("N").isNotNull()
 )
+with_weather = services_with_weather.filter(weather_data_condition).count()
+without_date = services_with_weather.filter(col("stop_event_ts").isNull()).count()
+without_station_mapping = services_with_weather.filter(col("weather_station").isNull()).count()
+
+print(f"\n=== Merge Diagnostics ===")
+print(f"Total service records: {total_count}")
+print(f"Records with weather data: {with_weather} ({100*with_weather/total_count:.1f}%)")
+print(f"Records without stop_event_ts (no date): {without_date} ({100*without_date/total_count:.1f}%)")
+print(f"Records without weather station mapping: {without_station_mapping} ({100*without_station_mapping/total_count:.1f}%)")
+print(f"Records with mapping but no weather: {total_count - with_weather - without_station_mapping - without_date}")
+
+# Sample of services without a date
+print("\nSample of services without stop_event_ts:")
+services_with_weather.filter(col("stop_event_ts").isNull()).select(
+    "service_rdt_id", "stop_station_code", "weather_station", "stop_arrival_time", "stop_departure_time"
+).show(10, truncate=False)
 
 
 # === Step 4: Write output ===
@@ -256,7 +295,7 @@ services_with_weather.write.mode("overwrite").partitionBy("year", "month").parqu
 )
 
 # Also save the station mapping for reference
-MAPPING_PATH = f"{MASTER_BASE}/station_weather_mapping"
+MAPPING_PATH = f"final_project/data/master/station_weather_mapping"
 print(f"Saving station-to-weather mapping to {MAPPING_PATH}...")
 station_to_weather.write.mode("overwrite").parquet(MAPPING_PATH)
 
