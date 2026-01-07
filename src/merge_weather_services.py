@@ -217,7 +217,9 @@ print("Filtering services without stop_event_ts...")
 
 services = services.filter(col("stop_event_ts").isNotNull())
 filtered_count = services.count()
-print(f"Filtered services record count: {filtered_count} (removed {initial_count - filtered_count})")
+print(
+    f"Filtered services record count: {filtered_count} (removed {initial_count - filtered_count})"
+)
 # Extract date and hour for weather matching
 services = services.withColumn(
     "service_weather_date", F.to_date("stop_event_ts")
@@ -269,8 +271,14 @@ services_with_weather = services_with_weather.drop(
 
 print("Sample of services with weather data:")
 services_with_weather.select(
-    "stop_station_code", "weather_station", "weather_station_distance_km",
-    "stop_event_ts", "T", "FF", "DR", "VV"
+    "stop_station_code",
+    "weather_station",
+    "weather_station_distance_km",
+    "stop_event_ts",
+    "T",
+    "FF",
+    "DR",
+    "VV",
 ).show(100, truncate=False)
 
 # === Diagnostics: Check unmatched records ===
@@ -278,25 +286,45 @@ total_count = services_with_weather.count()
 
 # Check if ANY weather column has data (not just T)
 weather_data_condition = (
-    col("T").isNotNull() | col("FF").isNotNull() | col("DR").isNotNull() |
-    col("VV").isNotNull() | col("P").isNotNull() | col("U").isNotNull() |
-    col("DD").isNotNull() | col("FX").isNotNull() | col("N").isNotNull()
+    col("T").isNotNull()
+    | col("FF").isNotNull()
+    | col("DR").isNotNull()
+    | col("VV").isNotNull()
+    | col("P").isNotNull()
+    | col("U").isNotNull()
+    | col("DD").isNotNull()
+    | col("FX").isNotNull()
+    | col("N").isNotNull()
 )
 with_weather = services_with_weather.filter(weather_data_condition).count()
 without_date = services_with_weather.filter(col("stop_event_ts").isNull()).count()
-without_station_mapping = services_with_weather.filter(col("weather_station").isNull()).count()
+without_station_mapping = services_with_weather.filter(
+    col("weather_station").isNull()
+).count()
 
 print(f"\n=== Merge Diagnostics ===")
 print(f"Total service records: {total_count}")
-print(f"Records with weather data: {with_weather} ({100*with_weather/total_count:.1f}%)")
-print(f"Records without stop_event_ts (no date): {without_date} ({100*without_date/total_count:.1f}%)")
-print(f"Records without weather station mapping: {without_station_mapping} ({100*without_station_mapping/total_count:.1f}%)")
-print(f"Records with mapping but no weather: {total_count - with_weather - without_station_mapping - without_date}")
+print(
+    f"Records with weather data: {with_weather} ({100*with_weather/total_count:.1f}%)"
+)
+print(
+    f"Records without stop_event_ts (no date): {without_date} ({100*without_date/total_count:.1f}%)"
+)
+print(
+    f"Records without weather station mapping: {without_station_mapping} ({100*without_station_mapping/total_count:.1f}%)"
+)
+print(
+    f"Records with mapping but no weather: {total_count - with_weather - without_station_mapping - without_date}"
+)
 
 # Sample of services without a date
 print("\nSample of services without stop_event_ts:")
 services_with_weather.filter(col("stop_event_ts").isNull()).select(
-    "service_rdt_id", "stop_station_code", "weather_station", "stop_arrival_time", "stop_departure_time"
+    "service_rdt_id",
+    "stop_station_code",
+    "weather_station",
+    "stop_arrival_time",
+    "stop_departure_time",
 ).show(10, truncate=False)
 
 
@@ -307,7 +335,7 @@ services_with_weather.write.mode("overwrite").partitionBy("year", "month").parqu
 )
 
 # Also save the station mapping for reference
-MAPPING_PATH = f"final_project/data/master/station_weather_mapping"
+MAPPING_PATH = "final_project/data/master/station_weather_mapping"
 print(f"Saving station-to-weather mapping to {MAPPING_PATH}...")
 station_to_weather.write.mode("overwrite").parquet(MAPPING_PATH)
 
