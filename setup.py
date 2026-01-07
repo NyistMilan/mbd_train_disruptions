@@ -6,7 +6,6 @@ setup(
     description='',
     url='',
     packages=['mbd_train_disruptions'],
-    package_dir={'mbd_train_disruptions': 'src'},
     license='',
     author='Milan Konor Nyist',
     python_requires='',
