@@ -1,10 +1,3 @@
-"""
-Consolidate all historical train station data into a single master file.
-
-This script reads station files from multiple years and creates a unified
-stations dataset with all unique stations and their properties.
-"""
-
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.functions import col
 
