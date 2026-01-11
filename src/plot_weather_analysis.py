@@ -232,21 +232,39 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
         # Filter to bins with enough samples
         data = data[data['count'] >= 100].copy()
         
+        if len(data) < 2:
+            ax.text(0.5, 0.5, 'Insufficient data', ha='center', va='center', 
+                   transform=ax.transAxes)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel('Mean Delay (min)')
+            ax.set_title(title)
+            continue
+        
+        # Handle NaN values
+        data = data.dropna(subset=[col, 'mean_delay'])
+        
         ax.errorbar(data[col], data['mean_delay'], 
-                   yerr=data['std_delay'] / np.sqrt(data['count']),
+                   yerr=data['std_delay'].fillna(0) / np.sqrt(data['count']),
                    fmt='o-', capsize=3, capthick=1, markersize=4)
         
         ax.set_xlabel(xlabel)
         ax.set_ylabel('Mean Delay (min)')
         ax.set_title(title)
         
-        # Add trend line
+        # Add trend line with error handling
         if len(data) >= 3:
-            z = np.polyfit(data[col], data['mean_delay'], 1)
-            p = np.poly1d(z)
-            x_line = np.linspace(data[col].min(), data[col].max(), 100)
-            ax.plot(x_line, p(x_line), 'r--', alpha=0.7, label=f'Trend')
-            ax.legend()
+            try:
+                x_vals = data[col].astype(float).values
+                y_vals = data['mean_delay'].astype(float).values
+                # Check for valid data
+                if np.all(np.isfinite(x_vals)) and np.all(np.isfinite(y_vals)):
+                    z = np.polyfit(x_vals, y_vals, 1)
+                    p = np.poly1d(z)
+                    x_line = np.linspace(x_vals.min(), x_vals.max(), 100)
+                    ax.plot(x_line, p(x_line), 'r--', alpha=0.7, label='Trend')
+                    ax.legend()
+            except (np.linalg.LinAlgError, ValueError) as e:
+                print(f"  Warning: Could not fit trend line for {key}: {e}")
     
     plt.suptitle('Weather-Delay Relationships (Aggregated)', fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
