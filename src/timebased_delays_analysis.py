@@ -17,6 +17,7 @@ df = (
     master
     .select(
         "service_date",
+        "service_rdt_id",
         "service_completely_cancelled",
         "service_partly_cancelled",
         "stop_arrival_ts",
@@ -25,52 +26,103 @@ df = (
         "stop_departure_delay",
     )
     .withColumn("event_ts", F.coalesce(F.col("stop_arrival_ts"), F.col("stop_departure_ts")))
-    .withColumn("event_date", F.to_date(F.col("event_ts")))
-    .withColumn("hour", F.hour(F.col("event_ts")))
+    .withColumn("service_date", F.when(F.col("event_ts").isNotNull(), F.to_date(F.col("event_ts"))).otherwise(F.col("service_date")))
+    .withColumn("hour", F.when(F.col("event_ts").isNotNull(), F.hour(F.col("event_ts"))).otherwise(F.lit(-1)))
+    .withColumn("missing_event_ts", F.col("event_ts").isNull())
     .withColumn("delay_val", F.coalesce(F.col("stop_arrival_delay"), F.col("stop_departure_delay")))
     .withColumn("delay_val_filled", F.coalesce(F.col("delay_val"), F.lit(0.0)).cast("double"))
-    .filter(F.col("event_ts").isNotNull())
     .cache()
 )
 
-# Number of trains per day
-daily_totals = df.groupBy("event_date").agg(F.count(F.lit(1)).alias("trains_in_day"))
-
-# Hourly aggregates
-hourly = (
+# Collapse to one row per service per hour
+services_per_hour = (
     df
-    .groupBy("event_date", "hour")
+    .select(
+        "service_rdt_id",
+        "service_date",
+        "hour",
+        "service_completely_cancelled",
+        "service_partly_cancelled",
+        "delay_val_filled",
+    )
+    .groupBy("service_date", "hour", "service_rdt_id")
     .agg(
-        F.count(F.lit(1)).alias("trains_in_hour"),
-        F.sum(F.when(F.col("service_completely_cancelled") == True, 1).otherwise(0)).alias("completely_cancelled"),
-        F.sum(F.when(F.col("service_partly_cancelled") == True, 1).otherwise(0)).alias("partly_cancelled"),
-        F.sum(F.when(F.col("delay_val_filled") > 0, 1).otherwise(0)).alias("delayed_count"),
-        F.sum(F.when(F.col("delay_val_filled") == 0, 1).otherwise(0)).alias("on_time_count"),
-        F.avg(F.col("delay_val_filled")).alias("avg_delay_all_trains"),
-        F.avg(F.when(F.col("delay_val") > 0, F.col("delay_val")).cast("double")).alias("avg_delay_delays_only"),
+        F.max(F.col("service_completely_cancelled").cast("int")).alias("svc_completely_cancelled"),
+        F.max(F.col("service_partly_cancelled").cast("int")).alias("svc_partly_cancelled"),
+        F.max(F.col("delay_val_filled")).alias("svc_max_delay"),
+        F.avg(F.col("delay_val_filled")).alias("svc_avg_delay"),
+    )
+)
+
+# Number of distinct services per day
+daily_totals = (
+    services_per_hour
+    .select("service_date", "service_rdt_id")
+    .dropDuplicates(["service_date", "service_rdt_id"])
+    .groupBy("service_date")
+    .agg(F.count("service_rdt_id").alias("services_in_day"))
+)
+
+# Hourly aggregates across services
+hourly = (
+    services_per_hour
+    .groupBy("service_date", "hour")
+    .agg(
+        F.count("service_rdt_id").alias("services_in_hour"),
+        F.sum(F.col("svc_completely_cancelled")).alias("completely_cancelled"),
+        F.sum(F.col("svc_partly_cancelled")).alias("partly_cancelled"),
+        F.sum(F.when(F.col("svc_max_delay") > 0, 1).otherwise(0)).alias("delayed_count"),
+        F.sum(F.when(F.col("svc_max_delay") == 0, 1).otherwise(0)).alias("on_time_count"),
+        F.avg(F.col("svc_max_delay")).alias("max_avg_delay_all_services"),
+        F.avg(F.when(F.col("svc_max_delay") > 0, F.col("svc_max_delay")).cast("double")).alias("max_avg_delay_delays_only"),
+        F.avg(F.col("svc_avg_delay")).alias("avg_avg_delay_all_services"),
+        F.avg(F.when(F.col("svc_avg_delay") > 0, F.col("svc_avg_delay")).cast("double")).alias("avg_avg_delay_delays_only"),
     )
 )
 
 # Join with daily totals to compute the hour share
 hourly_with_day = (
-    hourly.join(daily_totals, ["event_date"], "left")
-    .withColumn("hour_share_of_day", F.col("trains_in_hour") / F.col("trains_in_day"))
+    hourly.join(daily_totals, ["service_date"], "left")
+    .withColumn("hour_share_of_day", F.col("services_in_hour") / F.col("services_in_day"))
     .select(
-        F.col("event_date").alias("service_date"),
+        F.when(
+            ((F.month(F.col("service_date")) == 12) & (F.dayofmonth(F.col("service_date")) >= 21)) |
+            (F.month(F.col("service_date")).isin(1, 2)) |
+            ((F.month(F.col("service_date")) == 3) & (F.dayofmonth(F.col("service_date")) <= 19)),
+            F.lit("winter")
+        ).when(
+            ((F.month(F.col("service_date")) == 3) & (F.dayofmonth(F.col("service_date")) >= 20)) |
+            (F.month(F.col("service_date")).isin(4, 5)) |
+            ((F.month(F.col("service_date")) == 6) & (F.dayofmonth(F.col("service_date")) <= 20)),
+            F.lit("spring")
+        ).when(
+            ((F.month(F.col("service_date")) == 6) & (F.dayofmonth(F.col("service_date")) >= 21)) |
+            (F.month(F.col("service_date")).isin(7, 8)) |
+            ((F.month(F.col("service_date")) == 9) & (F.dayofmonth(F.col("service_date")) <= 22)),
+            F.lit("summer")
+        ).when(
+            ((F.month(F.col("service_date")) == 9) & (F.dayofmonth(F.col("service_date")) >= 23)) |
+            (F.month(F.col("service_date")).isin(10, 11)) |
+            ((F.month(F.col("service_date")) == 12) & (F.dayofmonth(F.col("service_date")) <= 20)),
+            F.lit("autumn")
+        ).alias("season"),
+        F.col("service_date"),
         "hour",
-        "trains_in_hour",
-        "trains_in_day",
         "hour_share_of_day",
+        F.when(F.col("services_in_hour") > 0, (F.col("completely_cancelled") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_completely_cancelled"),
+        F.when(F.col("services_in_hour") > 0, (F.col("partly_cancelled") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_partly_cancelled"),
+        F.when(F.col("services_in_hour") > 0, (F.col("delayed_count") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_delayed"),
+        F.when(F.col("services_in_hour") > 0, (F.col("on_time_count") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_on_time"),
+        "max_avg_delay_all_services",
+        "max_avg_delay_delays_only",
+        "avg_avg_delay_all_services",
+        "avg_avg_delay_delays_only",
+        "services_in_hour",
+        "services_in_day",
         "completely_cancelled",
         "partly_cancelled",
         "delayed_count",
         "on_time_count",
-        F.when(F.col("trains_in_hour") > 0, (F.col("completely_cancelled") / F.col("trains_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_completely_cancelled"),
-        F.when(F.col("trains_in_hour") > 0, (F.col("partly_cancelled") / F.col("trains_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_partly_cancelled"),
-        F.when(F.col("trains_in_hour") > 0, (F.col("delayed_count") / F.col("trains_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_delayed"),
-        F.when(F.col("trains_in_hour") > 0, (F.col("on_time_count") / F.col("trains_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_on_time"),
-        "avg_delay_all_trains",
-        "avg_delay_delays_only",
     )
 )
 
