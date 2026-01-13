@@ -57,8 +57,7 @@ DELAY_COLS = ["stop_arrival_delay", "stop_departure_delay", "service_maximum_del
 
 # Initialize Spark
 spark = (
-    SparkSession.builder
-    .appName("weather_delay_correlation_analysis")
+    SparkSession.builder.appName("weather_delay_correlation_analysis")
     .config("spark.sql.parquet.int96RebaseModeInRead", "CORRECTED")
     .config("spark.sql.parquet.datetimeRebaseModeInRead", "CORRECTED")
     .getOrCreate()
@@ -109,12 +108,10 @@ def preprocess_data(df):
     for delay_col in DELAY_COLS:
         if delay_col in df.columns:
             df = df.withColumn(
-                f"{delay_col}_binary",
-                when(col(delay_col) > 0, 1).otherwise(0)
+                f"{delay_col}_binary", when(col(delay_col) > 0, 1).otherwise(0)
             )
             df = df.withColumn(
-                f"{delay_col}_significant",
-                when(col(delay_col) > 5, 1).otherwise(0)
+                f"{delay_col}_significant", when(col(delay_col) > 5, 1).otherwise(0)
             )
 
     # Create weather categories
@@ -124,7 +121,7 @@ def preprocess_data(df):
             when(col("T_celsius") < 0, "Freezing (<0°C)")
             .when(col("T_celsius") < 10, "Cold (0-10°C)")
             .when(col("T_celsius") < 20, "Mild (10-20°C)")
-            .otherwise("Warm (>20°C)")
+            .otherwise("Warm (>20°C)"),
         )
 
     if "FF_ms" in df.columns:
@@ -133,7 +130,7 @@ def preprocess_data(df):
             when(col("FF_ms") < 5, "Calm (<5 m/s)")
             .when(col("FF_ms") < 10, "Light (5-10 m/s)")
             .when(col("FF_ms") < 15, "Moderate (10-15 m/s)")
-            .otherwise("Strong (>15 m/s)")
+            .otherwise("Strong (>15 m/s)"),
         )
 
     if "DR_minutes" in df.columns:
@@ -142,7 +139,7 @@ def preprocess_data(df):
             when(col("DR_minutes") == 0, "No Rain")
             .when(col("DR_minutes") < 10, "Light Rain")
             .when(col("DR_minutes") < 30, "Moderate Rain")
-            .otherwise("Heavy Rain")
+            .otherwise("Heavy Rain"),
         )
 
     print("Preprocessing complete.")
@@ -175,26 +172,30 @@ def calculate_correlations(df):
 
             # Calculate Pearson correlation using Spark's built-in function
             correlation = pair_df.select(
-                corr(col(weather_col).cast(DoubleType()), 
-                     col(delay_col).cast(DoubleType()))
+                corr(
+                    col(weather_col).cast(DoubleType()),
+                    col(delay_col).cast(DoubleType()),
+                )
             ).collect()[0][0]
 
             if correlation is not None:
-                results.append({
-                    "weather_variable": weather_col,
-                    "weather_label": WEATHER_LABELS.get(weather_col, weather_col),
-                    "delay_variable": delay_col,
-                    "n_samples": n_samples,
-                    "correlation": correlation,
-                    "abs_correlation": abs(correlation)
-                })
+                results.append(
+                    {
+                        "weather_variable": weather_col,
+                        "weather_label": WEATHER_LABELS.get(weather_col, weather_col),
+                        "delay_variable": delay_col,
+                        "n_samples": n_samples,
+                        "correlation": correlation,
+                        "abs_correlation": abs(correlation),
+                    }
+                )
 
     # Create DataFrame and sort by absolute correlation
     if results:
         corr_df = spark.createDataFrame(results)
         corr_df = corr_df.orderBy(col("abs_correlation").desc())
         return corr_df
-    
+
     return None
 
 
@@ -215,7 +216,7 @@ def calculate_delay_stats_by_category(df):
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
                 mean("stop_arrival_delay_binary").alias("delay_rate"),
-                mean("stop_arrival_delay_significant").alias("significant_delay_rate")
+                mean("stop_arrival_delay_significant").alias("significant_delay_rate"),
             )
             .orderBy("temp_category")
         )
@@ -232,7 +233,7 @@ def calculate_delay_stats_by_category(df):
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
                 mean("stop_arrival_delay_binary").alias("delay_rate"),
-                mean("stop_arrival_delay_significant").alias("significant_delay_rate")
+                mean("stop_arrival_delay_significant").alias("significant_delay_rate"),
             )
             .orderBy("wind_category")
         )
@@ -249,7 +250,7 @@ def calculate_delay_stats_by_category(df):
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
                 mean("stop_arrival_delay_binary").alias("delay_rate"),
-                mean("stop_arrival_delay_significant").alias("significant_delay_rate")
+                mean("stop_arrival_delay_significant").alias("significant_delay_rate"),
             )
             .orderBy("rain_category")
         )
@@ -276,29 +277,49 @@ def analyze_extreme_weather(df):
         freezing_stats = freezing.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
             mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count")
+            count("*").alias("count"),
         ).collect()[0]
 
         normal_temp_stats = normal_temp.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
             mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count")
+            count("*").alias("count"),
         ).collect()[0]
 
         if freezing_stats["count"] > 0:
-            results.append({
-                "condition": "Freezing (<0°C)",
-                "mean_delay": float(freezing_stats["mean_delay"]) if freezing_stats["mean_delay"] else 0.0,
-                "delay_rate_pct": float(freezing_stats["delay_rate"]) * 100 if freezing_stats["delay_rate"] else 0.0,
-                "n_records": int(freezing_stats["count"])
-            })
+            results.append(
+                {
+                    "condition": "Freezing (<0°C)",
+                    "mean_delay": (
+                        float(freezing_stats["mean_delay"])
+                        if freezing_stats["mean_delay"]
+                        else 0.0
+                    ),
+                    "delay_rate_pct": (
+                        float(freezing_stats["delay_rate"]) * 100
+                        if freezing_stats["delay_rate"]
+                        else 0.0
+                    ),
+                    "n_records": int(freezing_stats["count"]),
+                }
+            )
         if normal_temp_stats["count"] > 0:
-            results.append({
-                "condition": "Normal Temp (5-20°C)",
-                "mean_delay": float(normal_temp_stats["mean_delay"]) if normal_temp_stats["mean_delay"] else 0.0,
-                "delay_rate_pct": float(normal_temp_stats["delay_rate"]) * 100 if normal_temp_stats["delay_rate"] else 0.0,
-                "n_records": int(normal_temp_stats["count"])
-            })
+            results.append(
+                {
+                    "condition": "Normal Temp (5-20°C)",
+                    "mean_delay": (
+                        float(normal_temp_stats["mean_delay"])
+                        if normal_temp_stats["mean_delay"]
+                        else 0.0
+                    ),
+                    "delay_rate_pct": (
+                        float(normal_temp_stats["delay_rate"]) * 100
+                        if normal_temp_stats["delay_rate"]
+                        else 0.0
+                    ),
+                    "n_records": int(normal_temp_stats["count"]),
+                }
+            )
 
     # High wind (> 15 m/s) vs Calm (< 5 m/s)
     if "FF_ms" in df.columns:
@@ -308,29 +329,49 @@ def analyze_extreme_weather(df):
         high_wind_stats = high_wind.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
             mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count")
+            count("*").alias("count"),
         ).collect()[0]
 
         calm_stats = calm.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
             mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count")
+            count("*").alias("count"),
         ).collect()[0]
 
         if high_wind_stats["count"] > 0:
-            results.append({
-                "condition": "Strong Wind (>15 m/s)",
-                "mean_delay": float(high_wind_stats["mean_delay"]) if high_wind_stats["mean_delay"] else 0.0,
-                "delay_rate_pct": float(high_wind_stats["delay_rate"]) * 100 if high_wind_stats["delay_rate"] else 0.0,
-                "n_records": int(high_wind_stats["count"])
-            })
+            results.append(
+                {
+                    "condition": "Strong Wind (>15 m/s)",
+                    "mean_delay": (
+                        float(high_wind_stats["mean_delay"])
+                        if high_wind_stats["mean_delay"]
+                        else 0.0
+                    ),
+                    "delay_rate_pct": (
+                        float(high_wind_stats["delay_rate"]) * 100
+                        if high_wind_stats["delay_rate"]
+                        else 0.0
+                    ),
+                    "n_records": int(high_wind_stats["count"]),
+                }
+            )
         if calm_stats["count"] > 0:
-            results.append({
-                "condition": "Calm (<5 m/s)",
-                "mean_delay": float(calm_stats["mean_delay"]) if calm_stats["mean_delay"] else 0.0,
-                "delay_rate_pct": float(calm_stats["delay_rate"]) * 100 if calm_stats["delay_rate"] else 0.0,
-                "n_records": int(calm_stats["count"])
-            })
+            results.append(
+                {
+                    "condition": "Calm (<5 m/s)",
+                    "mean_delay": (
+                        float(calm_stats["mean_delay"])
+                        if calm_stats["mean_delay"]
+                        else 0.0
+                    ),
+                    "delay_rate_pct": (
+                        float(calm_stats["delay_rate"]) * 100
+                        if calm_stats["delay_rate"]
+                        else 0.0
+                    ),
+                    "n_records": int(calm_stats["count"]),
+                }
+            )
 
     # Heavy rain vs No rain
     if "DR_minutes" in df.columns:
@@ -340,29 +381,49 @@ def analyze_extreme_weather(df):
         heavy_rain_stats = heavy_rain.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
             mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count")
+            count("*").alias("count"),
         ).collect()[0]
 
         no_rain_stats = no_rain.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
             mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count")
+            count("*").alias("count"),
         ).collect()[0]
 
         if heavy_rain_stats["count"] > 0:
-            results.append({
-                "condition": "Heavy Rain (>30 min/hr)",
-                "mean_delay": float(heavy_rain_stats["mean_delay"]) if heavy_rain_stats["mean_delay"] else 0.0,
-                "delay_rate_pct": float(heavy_rain_stats["delay_rate"]) * 100 if heavy_rain_stats["delay_rate"] else 0.0,
-                "n_records": int(heavy_rain_stats["count"])
-            })
+            results.append(
+                {
+                    "condition": "Heavy Rain (>30 min/hr)",
+                    "mean_delay": (
+                        float(heavy_rain_stats["mean_delay"])
+                        if heavy_rain_stats["mean_delay"]
+                        else 0.0
+                    ),
+                    "delay_rate_pct": (
+                        float(heavy_rain_stats["delay_rate"]) * 100
+                        if heavy_rain_stats["delay_rate"]
+                        else 0.0
+                    ),
+                    "n_records": int(heavy_rain_stats["count"]),
+                }
+            )
         if no_rain_stats["count"] > 0:
-            results.append({
-                "condition": "No Rain",
-                "mean_delay": float(no_rain_stats["mean_delay"]) if no_rain_stats["mean_delay"] else 0.0,
-                "delay_rate_pct": float(no_rain_stats["delay_rate"]) * 100 if no_rain_stats["delay_rate"] else 0.0,
-                "n_records": int(no_rain_stats["count"])
-            })
+            results.append(
+                {
+                    "condition": "No Rain",
+                    "mean_delay": (
+                        float(no_rain_stats["mean_delay"])
+                        if no_rain_stats["mean_delay"]
+                        else 0.0
+                    ),
+                    "delay_rate_pct": (
+                        float(no_rain_stats["delay_rate"]) * 100
+                        if no_rain_stats["delay_rate"]
+                        else 0.0
+                    ),
+                    "n_records": int(no_rain_stats["count"]),
+                }
+            )
 
     if results:
         extreme_df = spark.createDataFrame(results)
@@ -385,14 +446,13 @@ def generate_aggregated_data_for_plots(df):
     if "T_celsius" in df.columns:
         temp_bins = (
             df.withColumn(
-                "temp_bin",
-                (F.floor(col("T_celsius") / 2) * 2).cast("int")  # 2°C bins
+                "temp_bin", (F.floor(col("T_celsius") / 2) * 2).cast("int")  # 2°C bins
             )
             .groupBy("temp_bin")
             .agg(
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
-                count("*").alias("count")
+                count("*").alias("count"),
             )
             .orderBy("temp_bin")
         )
@@ -400,15 +460,12 @@ def generate_aggregated_data_for_plots(df):
 
     if "FF_ms" in df.columns:
         wind_bins = (
-            df.withColumn(
-                "wind_bin",
-                (F.floor(col("FF_ms"))).cast("int")  # 1 m/s bins
-            )
+            df.withColumn("wind_bin", (F.floor(col("FF_ms"))).cast("int"))  # 1 m/s bins
             .groupBy("wind_bin")
             .agg(
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
-                count("*").alias("count")
+                count("*").alias("count"),
             )
             .orderBy("wind_bin")
         )
@@ -418,13 +475,13 @@ def generate_aggregated_data_for_plots(df):
         rain_bins = (
             df.withColumn(
                 "rain_bin",
-                (F.floor(col("DR_minutes") / 5) * 5).cast("int")  # 5 min bins
+                (F.floor(col("DR_minutes") / 5) * 5).cast("int"),  # 5 min bins
             )
             .groupBy("rain_bin")
             .agg(
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
-                count("*").alias("count")
+                count("*").alias("count"),
             )
             .orderBy("rain_bin")
         )
@@ -434,13 +491,13 @@ def generate_aggregated_data_for_plots(df):
         visibility_bins = (
             df.withColumn(
                 "visibility_bin",
-                (F.floor(col("VV") / 10) * 10).cast("int")  # 10-unit bins
+                (F.floor(col("VV") / 10) * 10).cast("int"),  # 10-unit bins
             )
             .groupBy("visibility_bin")
             .agg(
                 mean("stop_arrival_delay").alias("mean_delay"),
                 stddev("stop_arrival_delay").alias("std_delay"),
-                count("*").alias("count")
+                count("*").alias("count"),
             )
             .orderBy("visibility_bin")
         )
@@ -458,19 +515,25 @@ def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path):
     # Save correlations
     if corr_df is not None:
         corr_path = f"{output_path}/correlations"
-        corr_df.coalesce(1).write.mode("overwrite").option("header", True).csv(corr_path)
+        corr_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
+            corr_path
+        )
         print(f"Saved correlations to: {corr_path}")
 
     # Save delay stats
     for name, stats_df in delay_stats.items():
         stats_path = f"{output_path}/delay_stats_{name}"
-        stats_df.coalesce(1).write.mode("overwrite").option("header", True).csv(stats_path)
+        stats_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
+            stats_path
+        )
         print(f"Saved {name} stats to: {stats_path}")
 
     # Save extreme weather analysis
     if extreme_df is not None:
         extreme_path = f"{output_path}/extreme_weather"
-        extreme_df.coalesce(1).write.mode("overwrite").option("header", True).csv(extreme_path)
+        extreme_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
+            extreme_path
+        )
         print(f"Saved extreme weather analysis to: {extreme_path}")
 
     # Save aggregated data for plotting
@@ -517,9 +580,11 @@ def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
 
     if corr_df is not None:
         # Get mean absolute correlation
-        mean_corr = corr_df.filter(
-            col("delay_variable") == "stop_arrival_delay"
-        ).agg(mean("abs_correlation")).collect()[0][0]
+        mean_corr = (
+            corr_df.filter(col("delay_variable") == "stop_arrival_delay")
+            .agg(mean("abs_correlation"))
+            .collect()[0][0]
+        )
 
         if mean_corr:
             print(f"\n  • Average absolute correlation: {mean_corr:.4f}")
@@ -532,62 +597,62 @@ def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
                 strength = "moderate"
 
             print(f"\n  CONCLUSION:")
-            print(f"    Weather conditions show a {strength} correlation with train delays.")
-            print("    Other factors (infrastructure, scheduling, incidents) likely play")
+            print(
+                f"    Weather conditions show a {strength} correlation with train delays."
+            )
+            print(
+                "    Other factors (infrastructure, scheduling, incidents) likely play"
+            )
             print("    a more significant role in causing delays.")
 
     print(f"\n{'='*70}")
 
 
-def main():
-    """Main analysis pipeline."""
-    print("=" * 70)
-    print("WEATHER-DELAY CORRELATION ANALYSIS (PySpark)")
-    print("=" * 70)
+# === Main Analysis Pipeline ===
+"""Main analysis pipeline."""
+print("=" * 70)
+print("WEATHER-DELAY CORRELATION ANALYSIS (PySpark)")
+print("=" * 70)
 
-    # Load data
-    df = load_data(DATA_PATH)
-    total_count = df.count()
+# Load data
+df = load_data(DATA_PATH)
+total_count = df.count()
 
-    # Cache the dataframe for repeated use
-    df = df.cache()
+# Cache the dataframe for repeated use
+df = df.cache()
 
-    # Preprocess
-    df = preprocess_data(df)
+# Preprocess
+df = preprocess_data(df)
 
-    # Calculate correlations
-    corr_df = calculate_correlations(df)
-    if corr_df is not None:
-        print("\nCorrelation Results:")
-        corr_df.show(20, truncate=False)
+# Calculate correlations
+corr_df = calculate_correlations(df)
+if corr_df is not None:
+    print("\nCorrelation Results:")
+    corr_df.show(20, truncate=False)
 
-    # Calculate delay stats by category
-    delay_stats = calculate_delay_stats_by_category(df)
+# Calculate delay stats by category
+delay_stats = calculate_delay_stats_by_category(df)
 
-    # Extreme weather analysis
-    extreme_df = analyze_extreme_weather(df)
+# Extreme weather analysis
+extreme_df = analyze_extreme_weather(df)
 
-    # Generate aggregated data for visualization
-    aggregations = generate_aggregated_data_for_plots(df)
+# Generate aggregated data for visualization
+aggregations = generate_aggregated_data_for_plots(df)
 
-    # Save all results
-    save_results(corr_df, delay_stats, extreme_df, aggregations, OUTPUT_PATH)
+# Save all results
+save_results(corr_df, delay_stats, extreme_df, aggregations, OUTPUT_PATH)
 
-    # Print summary report
-    print_summary_report(corr_df, delay_stats, extreme_df, total_count)
+# Print summary report
+print_summary_report(corr_df, delay_stats, extreme_df, total_count)
 
-    print(f"\n{'='*70}")
-    print("ANALYSIS COMPLETE")
-    print(f"{'='*70}")
-    print(f"\nAll results saved to: {OUTPUT_PATH}")
-    print("\nTo create visualizations, download the CSV files and run:")
-    print("  python src/plot_weather_analysis.py")
+print(f"\n{'='*70}")
+print("ANALYSIS COMPLETE")
+print(f"{'='*70}")
+print(f"\nAll results saved to: {OUTPUT_PATH}")
+print("\nTo create visualizations, download the CSV files and run:")
+print("  python src/plot_weather_analysis.py")
 
-    # Unpersist cached data
-    df.unpersist()
+# Unpersist cached data
+df.unpersist()
 
-    spark.stop()
-
-
-if __name__ == "__main__":
-    main()
+spark.stop()
