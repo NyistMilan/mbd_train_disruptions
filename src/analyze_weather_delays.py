@@ -28,6 +28,74 @@ Usage:
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.functions import col, when, lit, count, mean, stddev, corr
 from pyspark.sql.types import DoubleType
+from datetime import datetime
+import io
+
+
+# === Logging Class for HDFS Output ===
+class HDFSLogger:
+    """Logger that collects output and writes to HDFS as a text file."""
+    
+    def __init__(self):
+        self.log_lines = []
+        self.start_time = datetime.now()
+    
+    def log(self, message: str = ""):
+        """Log a message (also prints to stdout)."""
+        print(message)
+        self.log_lines.append(message)
+    
+    def section(self, title: str):
+        """Log a section header."""
+        self.log("\n" + "=" * 70)
+        self.log(title)
+        self.log("=" * 70)
+    
+    def subsection(self, title: str):
+        """Log a subsection header."""
+        self.log("\n" + "-" * 70)
+        self.log(title)
+        self.log("-" * 70)
+    
+    def save_to_hdfs(self, spark, output_path: str):
+        """Save the log to HDFS as a text file."""
+        # Add timing info
+        end_time = datetime.now()
+        duration = end_time - self.start_time
+        
+        self.log("\n" + "=" * 70)
+        self.log("JOB TIMING")
+        self.log("=" * 70)
+        self.log(f"Start time: {self.start_time}")
+        self.log(f"End time: {end_time}")
+        self.log(f"Duration: {duration}")
+        
+        # Write to HDFS
+        log_content = "\n".join(self.log_lines)
+        log_path = f"{output_path}/analysis_log.txt"
+        
+        # Create RDD from log content and save as text file
+        log_rdd = spark.sparkContext.parallelize([log_content], 1)
+        
+        # Delete existing log if present
+        try:
+            hadoop_conf = spark._jsc.hadoopConfiguration()
+            fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
+            path = spark._jvm.org.apache.hadoop.fs.Path(log_path)
+            if fs.exists(path):
+                fs.delete(path, True)
+        except Exception as e:
+            print(f"Note: Could not delete existing log: {e}")
+        
+        log_rdd.saveAsTextFile(log_path)
+        print(f"\nLog saved to: {log_path}")
+        print("To view the log, run:")
+        print(f"  hdfs dfs -cat {log_path}/part-00000")
+
+
+# Initialize logger
+logger = HDFSLogger()
+
 
 # === Configuration ===
 DATA_PATH = "/user/s3544648/final_project/data/master/services_with_weather"
@@ -68,16 +136,14 @@ spark.sparkContext.setLogLevel("WARN")
 
 def load_data(data_path: str):
     """Load the services_with_weather parquet data."""
-    print(f"\n{'='*70}")
-    print("LOADING DATA")
-    print(f"{'='*70}")
-    print(f"Loading data from {data_path}...")
+    logger.section("LOADING DATA")
+    logger.log(f"Loading data from {data_path}...")
 
     df = spark.read.parquet(data_path)
 
     total_count = df.count()
-    print(f"Loaded {total_count:,} records")
-    print(f"Columns: {df.columns}")
+    logger.log(f"Loaded {total_count:,} records")
+    logger.log(f"Columns: {df.columns}")
 
     return df
 
@@ -921,15 +987,11 @@ def save_results(
 
 def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
     """Print a summary report of the analysis."""
-    print(f"\n{'='*70}")
-    print("WEATHER-DELAY CORRELATION ANALYSIS REPORT")
-    print(f"{'='*70}")
-    print(f"\nDataset: {total_count:,} train service records with weather data")
+    logger.section("WEATHER-DELAY CORRELATION ANALYSIS REPORT")
+    logger.log(f"\nDataset: {total_count:,} train service records with weather data")
 
-    print(f"\n{'-'*70}")
-    print("1. CORRELATION SUMMARY")
-    print(f"{'-'*70}")
-    print("\nTop correlations between weather variables and arrival delays:")
+    logger.subsection("1. CORRELATION SUMMARY")
+    logger.log("\nTop correlations between weather variables and arrival delays:")
 
     if corr_df is not None:
         arrival_corr = (
@@ -940,19 +1002,17 @@ def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
 
         rows = arrival_corr.collect()
         for row in rows:
-            print(f"  {row['weather_label']:40} r={row['correlation']:+.4f}")
+            logger.log(f"  {row['weather_label']:40} r={row['correlation']:+.4f}")
 
-    print("\nINTERPRETATION:")
-    print("  - Positive correlation: Higher values → more delays")
-    print("  - Negative correlation: Higher values → fewer delays")
-    print("  - |r| < 0.1: Very weak correlation")
-    print("  - 0.1 ≤ |r| < 0.3: Weak correlation")
-    print("  - 0.3 ≤ |r| < 0.5: Moderate correlation")
-    print("  - |r| ≥ 0.5: Strong correlation")
+    logger.log("\nINTERPRETATION:")
+    logger.log("  - Positive correlation: Higher values → more delays")
+    logger.log("  - Negative correlation: Higher values → fewer delays")
+    logger.log("  - |r| < 0.1: Very weak correlation")
+    logger.log("  - 0.1 ≤ |r| < 0.3: Weak correlation")
+    logger.log("  - 0.3 ≤ |r| < 0.5: Moderate correlation")
+    logger.log("  - |r| ≥ 0.5: Strong correlation")
 
-    print(f"\n{'-'*70}")
-    print("2. KEY FINDINGS")
-    print(f"{'-'*70}")
+    logger.subsection("2. KEY FINDINGS")
 
     if corr_df is not None:
         # Get mean absolute correlation
@@ -963,7 +1023,7 @@ def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
         )
 
         if mean_corr:
-            print(f"\n  • Average absolute correlation: {mean_corr:.4f}")
+            logger.log(f"\n  • Average absolute correlation: {mean_corr:.4f}")
 
             if mean_corr < 0.1:
                 strength = "very weak"
@@ -972,23 +1032,19 @@ def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
             else:
                 strength = "moderate"
 
-            print(f"\n  CONCLUSION:")
-            print(
+            logger.log(f"\n  CONCLUSION:")
+            logger.log(
                 f"    Weather conditions show a {strength} correlation with train delays."
             )
-            print(
+            logger.log(
                 "    Other factors (infrastructure, scheduling, incidents) likely play"
             )
-            print("    a more significant role in causing delays.")
-
-    print(f"\n{'='*70}")
+            logger.log("    a more significant role in causing delays.")
 
 
 # === Main Analysis Pipeline ===
 """Main analysis pipeline."""
-print("=" * 70)
-print("WEATHER-DELAY CORRELATION ANALYSIS (PySpark)")
-print("=" * 70)
+logger.section("WEATHER-DELAY CORRELATION ANALYSIS (PySpark)")
 
 # Load data
 df = load_data(DATA_PATH)
@@ -1003,15 +1059,16 @@ df = preprocess_data(df)
 # ============================================
 # BASELINE ANALYSIS (Original)
 # ============================================
-print("\n" + "=" * 70)
-print("PART 1: BASELINE ANALYSIS")
-print("=" * 70)
+logger.section("PART 1: BASELINE ANALYSIS")
 
 # Calculate correlations
 corr_df = calculate_correlations(df)
 if corr_df is not None:
-    print("\nCorrelation Results:")
-    corr_df.show(20, truncate=False)
+    logger.log("\nCorrelation Results (top 20):")
+    # Collect and log correlations
+    corr_rows = corr_df.limit(20).collect()
+    for row in corr_rows:
+        logger.log(f"  {row['weather_label']:40} vs {row['delay_variable']:25} r={row['correlation']:+.4f}")
 
 # Calculate delay stats by category
 delay_stats = calculate_delay_stats_by_category(df)
@@ -1025,9 +1082,7 @@ aggregations = generate_aggregated_data_for_plots(df)
 # ============================================
 # EXTENDED ANALYSIS (New)
 # ============================================
-print("\n" + "=" * 70)
-print("PART 2: EXTENDED ANALYSIS - DIFFERENT DELAY METRICS")
-print("=" * 70)
+logger.section("PART 2: EXTENDED ANALYSIS - DIFFERENT DELAY METRICS")
 
 # Correlations with different delay severity thresholds
 corr_by_metric_df = calculate_correlations_by_delay_metric(df)
@@ -1057,12 +1112,13 @@ save_results(
 # Print summary report
 print_summary_report(corr_df, delay_stats, extreme_df, total_count)
 
-print(f"\n{'='*70}")
-print("ANALYSIS COMPLETE")
-print(f"{'='*70}")
-print(f"\nAll results saved to: {OUTPUT_PATH}")
-print("\nTo create visualizations, download the CSV files and run:")
-print("  python src/plot_weather_analysis.py")
+logger.section("ANALYSIS COMPLETE")
+logger.log(f"\nAll results saved to: {OUTPUT_PATH}")
+logger.log("\nTo create visualizations, download the CSV files and run:")
+logger.log("  python src/plot_weather_analysis.py")
+
+# Save log to HDFS
+logger.save_to_hdfs(spark, OUTPUT_PATH)
 
 # Unpersist cached data
 df.unpersist()
