@@ -318,6 +318,405 @@ def plot_extreme_weather(extreme_df: pd.DataFrame, output_dir: Path):
     print(f"Saved: {output_dir / 'extreme_weather_impact.png'}")
 
 
+# ============================================
+# NEW PLOTS FOR EXTENDED ANALYSIS
+# ============================================
+
+def plot_correlations_by_metric_heatmap(corr_by_metric_df: pd.DataFrame, output_dir: Path):
+    """Create a heatmap showing correlations across different delay severity levels."""
+    if corr_by_metric_df is None or corr_by_metric_df.empty:
+        print("No correlation by metric data available")
+        return
+    
+    print("Creating correlations by delay metric heatmap...")
+    
+    # Pivot for heatmap
+    pivot = corr_by_metric_df.pivot_table(
+        index='weather_variable',
+        columns='delay_metric',
+        values='correlation'
+    )
+    
+    # Reorder columns by severity
+    col_order = ['any_delay', 'significant_delay_gt5min', 'severe_delay_gt15min', 
+                 'very_severe_delay_gt30min', 'cancellation']
+    col_order = [c for c in col_order if c in pivot.columns]
+    pivot = pivot[col_order]
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    sns.heatmap(
+        pivot, 
+        annot=True, 
+        cmap='RdBu_r', 
+        center=0,
+        fmt='.4f',
+        vmin=-0.1,
+        vmax=0.1,
+        ax=ax,
+        linewidths=0.5
+    )
+    ax.set_title('Weather Correlations by Delay Severity\n(Does weather impact severe delays more?)', 
+                 fontsize=14, fontweight='bold')
+    ax.set_xlabel('Delay Metric', fontsize=12)
+    ax.set_ylabel('Weather Variable', fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'correlations_by_delay_metric.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_dir / 'correlations_by_delay_metric.png'}")
+
+
+def plot_correlations_by_metric_comparison(corr_by_metric_df: pd.DataFrame, output_dir: Path):
+    """Bar chart comparing correlations across delay metrics for top weather variables."""
+    if corr_by_metric_df is None or corr_by_metric_df.empty:
+        print("No correlation by metric data available")
+        return
+    
+    print("Creating correlation comparison by metric...")
+    
+    # Get top weather variables by average absolute correlation
+    avg_corr = corr_by_metric_df.groupby('weather_variable')['abs_correlation'].mean()
+    top_vars = avg_corr.nlargest(6).index.tolist()
+    
+    # Filter to top variables
+    plot_df = corr_by_metric_df[corr_by_metric_df['weather_variable'].isin(top_vars)].copy()
+    
+    # Create grouped bar chart
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    # Pivot for plotting
+    pivot = plot_df.pivot_table(
+        index='weather_label',
+        columns='delay_metric',
+        values='correlation'
+    )
+    
+    # Reorder columns
+    col_order = ['any_delay', 'significant_delay_gt5min', 'severe_delay_gt15min', 
+                 'very_severe_delay_gt30min', 'cancellation']
+    col_order = [c for c in col_order if c in pivot.columns]
+    pivot = pivot[col_order]
+    
+    pivot.plot(kind='bar', ax=ax, width=0.8, alpha=0.8)
+    
+    ax.axhline(y=0, color='black', linewidth=0.5)
+    ax.set_xlabel('Weather Variable', fontsize=12)
+    ax.set_ylabel('Correlation Coefficient', fontsize=12)
+    ax.set_title('Weather Correlations: Do Effects Increase with Delay Severity?', 
+                 fontsize=14, fontweight='bold')
+    ax.legend(title='Delay Metric', bbox_to_anchor=(1.02, 1), loc='upper left')
+    plt.xticks(rotation=45, ha='right')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'correlation_by_metric_comparison.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_dir / 'correlation_by_metric_comparison.png'}")
+
+
+def plot_true_extreme_events(true_extreme_df: pd.DataFrame, output_dir: Path):
+    """Plot true extreme weather events analysis."""
+    if true_extreme_df is None or true_extreme_df.empty:
+        print("No true extreme events data available")
+        return
+    
+    print("Creating true extreme events plots...")
+    
+    # Sort by mean delay
+    df = true_extreme_df.sort_values('mean_delay', ascending=True).copy()
+    
+    # Color coding based on condition type
+    def get_color(cond):
+        if 'BASELINE' in cond:
+            return 'gray'
+        elif any(x in cond for x in ['WINTER STORM', 'FREEZING RAIN', 'ICE RISK', 'STORM + RAIN']):
+            return 'darkred'  # Compound conditions
+        elif any(x in cond for x in ['Storm', 'Hurricane', 'Severe Storm']):
+            return 'orange'  # Wind
+        elif any(x in cond for x in ['Frost', 'Freezing', 'Heat']):
+            return 'steelblue'  # Temperature
+        elif any(x in cond for x in ['Fog', 'Visibility']):
+            return 'purple'  # Visibility
+        elif 'Rain' in cond:
+            return 'teal'  # Precipitation
+        else:
+            return 'lightgreen'
+    
+    colors = [get_color(c) for c in df['condition']]
+    
+    # Create multi-panel figure
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    # 1. Mean delay
+    ax = axes[0, 0]
+    bars = ax.barh(df['condition'], df['mean_delay'], color=colors, alpha=0.8)
+    ax.axvline(x=df[df['condition'].str.contains('BASELINE')]['mean_delay'].values[0], 
+               color='red', linestyle='--', label='Baseline')
+    ax.set_xlabel('Mean Arrival Delay (minutes)')
+    ax.set_title('Mean Delay by Extreme Condition')
+    ax.legend()
+    
+    # 2. Any delay rate
+    ax = axes[0, 1]
+    bars = ax.barh(df['condition'], df['delay_rate_pct'], color=colors, alpha=0.8)
+    ax.axvline(x=df[df['condition'].str.contains('BASELINE')]['delay_rate_pct'].values[0], 
+               color='red', linestyle='--', label='Baseline')
+    ax.set_xlabel('Any Delay Rate (%)')
+    ax.set_title('Delay Rate (>0 min) by Extreme Condition')
+    ax.legend()
+    
+    # 3. Significant delay rate (>5 min)
+    ax = axes[1, 0]
+    if 'sig_delay_rate_pct' in df.columns:
+        bars = ax.barh(df['condition'], df['sig_delay_rate_pct'], color=colors, alpha=0.8)
+        baseline_val = df[df['condition'].str.contains('BASELINE')]['sig_delay_rate_pct'].values[0]
+        ax.axvline(x=baseline_val, color='red', linestyle='--', label='Baseline')
+        ax.set_xlabel('Significant Delay Rate (>5 min) %')
+        ax.set_title('Significant Delay Rate by Extreme Condition')
+        ax.legend()
+    
+    # 4. Severe delay rate (>15 min)
+    ax = axes[1, 1]
+    if 'severe_delay_rate_pct' in df.columns:
+        bars = ax.barh(df['condition'], df['severe_delay_rate_pct'], color=colors, alpha=0.8)
+        baseline_val = df[df['condition'].str.contains('BASELINE')]['severe_delay_rate_pct'].values[0]
+        ax.axvline(x=baseline_val, color='red', linestyle='--', label='Baseline')
+        ax.set_xlabel('Severe Delay Rate (>15 min) %')
+        ax.set_title('Severe Delay Rate by Extreme Condition')
+        ax.legend()
+    
+    plt.suptitle('True Extreme Weather Events: Impact on Train Delays\n(Red dashed = baseline)', 
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'true_extreme_events.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_dir / 'true_extreme_events.png'}")
+    
+    # Also create a focused comparison plot
+    plot_extreme_vs_baseline(df, output_dir)
+
+
+def plot_extreme_vs_baseline(df: pd.DataFrame, output_dir: Path):
+    """Create a focused plot comparing extreme conditions to baseline."""
+    print("Creating extreme vs baseline comparison...")
+    
+    # Get baseline values
+    baseline = df[df['condition'].str.contains('BASELINE')].iloc[0]
+    
+    # Filter to non-baseline conditions with enough data
+    extreme = df[~df['condition'].str.contains('BASELINE')].copy()
+    if 'n_records' in extreme.columns:
+        extreme = extreme[extreme['n_records'] >= 1000]
+    
+    if extreme.empty:
+        print("  No extreme conditions with enough data")
+        return
+    
+    # Calculate relative increase vs baseline
+    extreme['delay_increase_pct'] = ((extreme['mean_delay'] - baseline['mean_delay']) 
+                                      / baseline['mean_delay'] * 100)
+    
+    # Sort by increase
+    extreme = extreme.sort_values('delay_increase_pct', ascending=True)
+    
+    # Color by positive/negative
+    colors = ['red' if x > 0 else 'green' for x in extreme['delay_increase_pct']]
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    bars = ax.barh(extreme['condition'], extreme['delay_increase_pct'], color=colors, alpha=0.7)
+    ax.axvline(x=0, color='black', linewidth=1)
+    ax.set_xlabel('Change in Mean Delay vs Baseline (%)', fontsize=12)
+    ax.set_title('Extreme Weather Impact: Delay Change Relative to Baseline', 
+                 fontsize=14, fontweight='bold')
+    
+    # Add percentage labels
+    for bar, val, n in zip(bars, extreme['delay_increase_pct'], 
+                           extreme['n_records'] if 'n_records' in extreme.columns else [0]*len(extreme)):
+        x_pos = val + 2 if val >= 0 else val - 2
+        ha = 'left' if val >= 0 else 'right'
+        label = f'{val:+.1f}%' + (f' (n={n:,})' if n > 0 else '')
+        ax.text(x_pos, bar.get_y() + bar.get_height()/2, label, va='center', ha=ha, fontsize=8)
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'extreme_vs_baseline.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_dir / 'extreme_vs_baseline.png'}")
+
+
+def plot_severity_distribution(severity_dist: dict, output_dir: Path):
+    """Plot delay severity distribution by weather category."""
+    if not severity_dist:
+        print("No severity distribution data available")
+        return
+    
+    print("Creating severity distribution plots...")
+    
+    for cat_name, data in severity_dist.items():
+        if data is None or data.empty:
+            continue
+        
+        # Find the category column
+        cat_col = None
+        for col in data.columns:
+            if 'category' in col.lower():
+                cat_col = col
+                break
+        
+        if cat_col is None:
+            cat_col = data.columns[0]
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # 1. Percentile plot
+        ax = axes[0]
+        x = range(len(data))
+        width = 0.2
+        
+        if 'mean_delay' in data.columns:
+            ax.bar([i - 1.5*width for i in x], data['mean_delay'], width, 
+                   label='Mean', color='steelblue', alpha=0.8)
+        if 'median_delay' in data.columns:
+            ax.bar([i - 0.5*width for i in x], data['median_delay'], width, 
+                   label='Median', color='lightblue', alpha=0.8)
+        if 'p95_delay' in data.columns:
+            ax.bar([i + 0.5*width for i in x], data['p95_delay'], width, 
+                   label='95th %ile', color='orange', alpha=0.8)
+        if 'p99_delay' in data.columns:
+            ax.bar([i + 1.5*width for i in x], data['p99_delay'], width, 
+                   label='99th %ile', color='red', alpha=0.8)
+        
+        ax.set_xticks(x)
+        ax.set_xticklabels(data[cat_col], rotation=45, ha='right')
+        ax.set_xlabel(cat_name.title())
+        ax.set_ylabel('Delay (minutes)')
+        ax.set_title(f'Delay Percentiles by {cat_name.title()}')
+        ax.legend()
+        
+        # 2. Severity rate stacked bar
+        ax = axes[1]
+        
+        # Stack the severity rates
+        severity_cols = ['any_delay_pct', 'sig_delay_pct', 'severe_delay_pct', 'very_severe_pct']
+        available_cols = [c for c in severity_cols if c in data.columns]
+        
+        if available_cols:
+            bottom = np.zeros(len(data))
+            colors_sev = ['lightblue', 'steelblue', 'orange', 'red']
+            labels = ['Any (>0 min)', 'Significant (>5)', 'Severe (>15)', 'Very Severe (>30)']
+            
+            for i, col in enumerate(available_cols):
+                ax.bar(x, data[col], bottom=bottom, label=labels[i], 
+                       color=colors_sev[i], alpha=0.8)
+                # Don't stack, show separately
+            
+            # Actually just show grouped bars instead
+            ax.clear()
+            width = 0.2
+            for i, (col, label, color) in enumerate(zip(available_cols, labels, colors_sev)):
+                offset = (i - len(available_cols)/2 + 0.5) * width
+                ax.bar([j + offset for j in x], data[col], width, 
+                       label=label, color=color, alpha=0.8)
+        
+        ax.set_xticks(x)
+        ax.set_xticklabels(data[cat_col], rotation=45, ha='right')
+        ax.set_xlabel(cat_name.title())
+        ax.set_ylabel('Delay Rate (%)')
+        ax.set_title(f'Delay Severity Rates by {cat_name.title()}')
+        ax.legend(loc='upper right')
+        
+        plt.suptitle(f'Delay Severity Distribution: {cat_name.title()}', 
+                     fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        plt.savefig(output_dir / f'severity_distribution_{cat_name}.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {output_dir / f'severity_distribution_{cat_name}.png'}")
+
+
+def create_summary_dashboard(corr_df, extreme_df, true_extreme_df, output_dir: Path):
+    """Create a summary dashboard with key findings."""
+    print("Creating summary dashboard...")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    # 1. Top correlations bar
+    ax = axes[0, 0]
+    if corr_df is not None and not corr_df.empty:
+        arrival_corr = corr_df[corr_df['delay_variable'] == 'stop_arrival_delay'].copy()
+        arrival_corr = arrival_corr.nlargest(8, 'abs_correlation')
+        arrival_corr = arrival_corr.sort_values('correlation')
+        
+        colors = ['coral' if x > 0 else 'steelblue' for x in arrival_corr['correlation']]
+        ax.barh(arrival_corr['weather_label'], arrival_corr['correlation'], color=colors, alpha=0.7)
+        ax.axvline(x=0, color='black', linewidth=0.5)
+        ax.set_xlabel('Correlation (r)')
+        ax.set_title('Top Weather-Delay Correlations')
+    
+    # 2. Baseline extreme comparison
+    ax = axes[0, 1]
+    if extreme_df is not None and not extreme_df.empty:
+        df = extreme_df.sort_values('mean_delay', ascending=True)
+        colors = ['coral' if any(x in c for x in ['Freezing', 'Strong', 'Heavy']) 
+                  else 'lightgreen' for c in df['condition']]
+        ax.barh(df['condition'], df['mean_delay'], color=colors, alpha=0.8)
+        ax.set_xlabel('Mean Delay (min)')
+        ax.set_title('Baseline Extreme Weather Comparison')
+    
+    # 3. True extreme events (compound conditions)
+    ax = axes[1, 0]
+    if true_extreme_df is not None and not true_extreme_df.empty:
+        # Filter to compound conditions
+        compound = true_extreme_df[
+            true_extreme_df['condition'].str.contains('STORM|RAIN|ICE|BASELINE', case=False)
+        ].copy()
+        if not compound.empty:
+            compound = compound.sort_values('mean_delay', ascending=True)
+            colors = ['gray' if 'BASELINE' in c else 'darkred' for c in compound['condition']]
+            ax.barh(compound['condition'], compound['mean_delay'], color=colors, alpha=0.8)
+            ax.set_xlabel('Mean Delay (min)')
+            ax.set_title('Compound Weather Conditions Impact')
+    
+    # 4. Key findings text
+    ax = axes[1, 1]
+    ax.axis('off')
+    
+    findings = ["KEY FINDINGS", "=" * 40, ""]
+    
+    if corr_df is not None and not corr_df.empty:
+        max_corr = corr_df['abs_correlation'].max()
+        mean_corr = corr_df['abs_correlation'].mean()
+        findings.append(f"• Max correlation: r = {max_corr:.4f}")
+        findings.append(f"• Mean |correlation|: {mean_corr:.4f}")
+        findings.append(f"• Interpretation: {'Very weak' if mean_corr < 0.1 else 'Weak' if mean_corr < 0.3 else 'Moderate'}")
+        findings.append("")
+    
+    if true_extreme_df is not None and not true_extreme_df.empty:
+        baseline = true_extreme_df[true_extreme_df['condition'].str.contains('BASELINE')]
+        if not baseline.empty:
+            baseline_delay = baseline['mean_delay'].values[0]
+            max_delay = true_extreme_df['mean_delay'].max()
+            max_cond = true_extreme_df.loc[true_extreme_df['mean_delay'].idxmax(), 'condition']
+            findings.append(f"• Baseline mean delay: {baseline_delay:.2f} min")
+            findings.append(f"• Highest delay: {max_delay:.2f} min")
+            findings.append(f"  Condition: {max_cond}")
+            findings.append(f"  Increase: {((max_delay-baseline_delay)/baseline_delay*100):.1f}%")
+    
+    findings.append("")
+    findings.append("=" * 40)
+    findings.append("CONCLUSION:")
+    findings.append("Weather has limited direct correlation")
+    findings.append("with delays, but extreme compound")
+    findings.append("conditions show measurable impact.")
+    
+    ax.text(0.1, 0.95, '\n'.join(findings), transform=ax.transAxes, 
+            fontsize=11, verticalalignment='top', fontfamily='monospace',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.suptitle('Weather-Delay Analysis Summary Dashboard', fontsize=16, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'summary_dashboard.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_dir / 'summary_dashboard.png'}")
+
+
 def main():
     """Main plotting pipeline."""
     print("=" * 70)
@@ -331,7 +730,7 @@ def main():
         return
     
     # Load all data
-    print("\nLoading data...")
+    print("\nLoading baseline data...")
     
     corr_df = load_csv_from_spark_output(DATA_DIR / "correlations")
     if corr_df is not None:
@@ -353,8 +752,25 @@ def main():
         if aggregations[agg_type] is not None:
             print(f"  Loaded {agg_type}: {len(aggregations[agg_type])} rows")
     
-    # Create plots
-    print("\nGenerating visualizations...")
+    # Load extended analysis data
+    print("\nLoading extended analysis data...")
+    
+    corr_by_metric_df = load_csv_from_spark_output(DATA_DIR / "correlations_by_metric")
+    if corr_by_metric_df is not None:
+        print(f"  Loaded correlations by metric: {len(corr_by_metric_df)} rows")
+    
+    true_extreme_df = load_csv_from_spark_output(DATA_DIR / "true_extreme_events")
+    if true_extreme_df is not None:
+        print(f"  Loaded true extreme events: {len(true_extreme_df)} rows")
+    
+    severity_dist = {}
+    for cat in ['temperature', 'wind', 'precipitation']:
+        severity_dist[cat] = load_csv_from_spark_output(DATA_DIR / f"severity_distribution_{cat}")
+        if severity_dist[cat] is not None:
+            print(f"  Loaded {cat} severity distribution: {len(severity_dist[cat])} rows")
+    
+    # Create baseline plots
+    print("\n--- Generating baseline visualizations ---")
     
     plot_correlation_heatmap(corr_df, OUTPUT_DIR)
     plot_correlation_bar(corr_df, OUTPUT_DIR)
@@ -362,6 +778,18 @@ def main():
     plot_delay_rate_by_category(delay_stats, OUTPUT_DIR)
     plot_aggregated_trends(aggregations, OUTPUT_DIR)
     plot_extreme_weather(extreme_df, OUTPUT_DIR)
+    
+    # Create extended analysis plots
+    print("\n--- Generating extended analysis visualizations ---")
+    
+    plot_correlations_by_metric_heatmap(corr_by_metric_df, OUTPUT_DIR)
+    plot_correlations_by_metric_comparison(corr_by_metric_df, OUTPUT_DIR)
+    plot_true_extreme_events(true_extreme_df, OUTPUT_DIR)
+    plot_severity_distribution(severity_dist, OUTPUT_DIR)
+    
+    # Create summary dashboard
+    print("\n--- Creating summary dashboard ---")
+    create_summary_dashboard(corr_df, extreme_df, true_extreme_df, OUTPUT_DIR)
     
     print("\n" + "=" * 70)
     print("VISUALIZATION COMPLETE")
