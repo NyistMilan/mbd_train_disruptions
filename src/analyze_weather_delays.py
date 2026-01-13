@@ -26,11 +26,9 @@ Usage:
 """
 
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import col, when, lit, count, mean, stddev, corr
+from pyspark.sql.functions import col, when, count, mean, stddev, corr
 from pyspark.sql.types import DoubleType
 from datetime import datetime
-import io
-
 
 # === Logging Class for HDFS Output ===
 class HDFSLogger:
@@ -150,25 +148,14 @@ def load_data(data_path: str):
 
 def preprocess_data(df):
     """Clean and preprocess the data for analysis."""
-    print(f"\n{'='*70}")
-    print("PREPROCESSING DATA")
-    print(f"{'='*70}")
+    logger.section("PREPROCESSING DATA")
 
-    # Convert weather values to real units
-    # Temperature: 0.1°C -> °C
-    if "T" in df.columns:
-        df = df.withColumn("T_celsius", col("T").cast(DoubleType()) / 10.0)
-    if "TD" in df.columns:
-        df = df.withColumn("TD_celsius", col("TD").cast(DoubleType()) / 10.0)
-
-    # Wind speed: 0.1 m/s -> m/s
-    for c in ["FF", "FH", "FX"]:
-        if c in df.columns:
-            df = df.withColumn(f"{c}_ms", col(c).cast(DoubleType()) / 10.0)
-
-    # Precipitation duration: 0.1 hr -> minutes
+    # Weather data is already in correct units from KNMI:
+    # T, TD: °C | FF, FH, FX: m/s | DR: hours | P: hPa
+    
+    # Only convert DR from hours to minutes for easier interpretation
     if "DR" in df.columns:
-        df = df.withColumn("DR_minutes", col("DR").cast(DoubleType()) * 6)
+        df = df.withColumn("DR_minutes", col("DR").cast(DoubleType()) * 60)
 
     # Create binary delay indicators with multiple thresholds
     for delay_col in DELAY_COLS:
@@ -200,21 +187,21 @@ def preprocess_data(df):
         )
 
     # Create weather categories
-    if "T_celsius" in df.columns:
+    if "T" in df.columns:
         df = df.withColumn(
             "temp_category",
-            when(col("T_celsius") < 0, "Freezing (<0°C)")
-            .when(col("T_celsius") < 10, "Cold (0-10°C)")
-            .when(col("T_celsius") < 20, "Mild (10-20°C)")
+            when(col("T") < 0, "Freezing (<0°C)")
+            .when(col("T") < 10, "Cold (0-10°C)")
+            .when(col("T") < 20, "Mild (10-20°C)")
             .otherwise("Warm (>20°C)"),
         )
 
-    if "FF_ms" in df.columns:
+    if "FF" in df.columns:
         df = df.withColumn(
             "wind_category",
-            when(col("FF_ms") < 5, "Calm (<5 m/s)")
-            .when(col("FF_ms") < 10, "Light (5-10 m/s)")
-            .when(col("FF_ms") < 15, "Moderate (10-15 m/s)")
+            when(col("FF") < 5, "Calm (<5 m/s)")
+            .when(col("FF") < 10, "Light (5-10 m/s)")
+            .when(col("FF") < 15, "Moderate (10-15 m/s)")
             .otherwise("Strong (>15 m/s)"),
         )
 
@@ -346,9 +333,9 @@ def analyze_extreme_weather(df):
     results = []
 
     # Extreme cold (< 0°C) vs Normal (5-20°C)
-    if "T_celsius" in df.columns:
-        freezing = df.filter(col("T_celsius") < 0)
-        normal_temp = df.filter((col("T_celsius") >= 5) & (col("T_celsius") <= 20))
+    if "T" in df.columns:
+        freezing = df.filter(col("T") < 0)
+        normal_temp = df.filter((col("T") >= 5) & (col("T") <= 20))
 
         freezing_stats = freezing.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
@@ -398,9 +385,9 @@ def analyze_extreme_weather(df):
             )
 
     # High wind (> 15 m/s) vs Calm (< 5 m/s)
-    if "FF_ms" in df.columns:
-        high_wind = df.filter(col("FF_ms") > 15)
-        calm = df.filter(col("FF_ms") < 5)
+    if "FF" in df.columns:
+        high_wind = df.filter(col("FF") > 15)
+        calm = df.filter(col("FF") < 5)
 
         high_wind_stats = high_wind.agg(
             mean("stop_arrival_delay").alias("mean_delay"),
@@ -516,10 +503,10 @@ def generate_aggregated_data_for_plots(df):
     aggregations = {}
 
     # 1. Hourly aggregation by weather bins for scatter-like visualization
-    if "T_celsius" in df.columns:
+    if "T" in df.columns:
         temp_bins = (
             df.withColumn(
-                "temp_bin", (F.floor(col("T_celsius") / 2) * 2).cast("int")  # 2°C bins
+                "temp_bin", (F.floor(col("T") / 2) * 2).cast("int")  # 2°C bins
             )
             .groupBy("temp_bin")
             .agg(
@@ -531,9 +518,9 @@ def generate_aggregated_data_for_plots(df):
         )
         aggregations["temp_bins"] = temp_bins
 
-    if "FF_ms" in df.columns:
+    if "FF" in df.columns:
         wind_bins = (
-            df.withColumn("wind_bin", (F.floor(col("FF_ms"))).cast("int"))  # 1 m/s bins
+            df.withColumn("wind_bin", (F.floor(col("FF"))).cast("int"))  # 1 m/s bins
             .groupBy("wind_bin")
             .agg(
                 mean("stop_arrival_delay").alias("mean_delay"),
@@ -711,48 +698,48 @@ def analyze_true_extreme_events(df):
         return None
 
     # === EXTREME TEMPERATURE ===
-    if "T_celsius" in df.columns:
+    if "T" in df.columns:
         # Severe frost (<-5°C)
-        severe_frost = df.filter(col("T_celsius") < -5)
+        severe_frost = df.filter(col("T") < -5)
         stat = get_stats(severe_frost, "Severe Frost (<-5°C)")
         if stat:
             results.append(stat)
 
         # Frost (<0°C)
-        frost = df.filter(col("T_celsius") < 0)
+        frost = df.filter(col("T") < 0)
         stat = get_stats(frost, "Frost (<0°C)")
         if stat:
             results.append(stat)
 
         # Heat wave (>30°C)
-        heat = df.filter(col("T_celsius") > 30)
+        heat = df.filter(col("T") > 30)
         stat = get_stats(heat, "Heat Wave (>30°C)")
         if stat:
             results.append(stat)
 
     # === EXTREME WIND ===
-    if "FX_ms" in df.columns:
+    if "FX" in df.columns:
         # Storm force gusts (>20 m/s = 72 km/h)
-        storm_gusts = df.filter(col("FX_ms") > 20)
+        storm_gusts = df.filter(col("FX") > 20)
         stat = get_stats(storm_gusts, "Storm Gusts (>20 m/s)")
         if stat:
             results.append(stat)
 
         # Severe storm gusts (>25 m/s = 90 km/h)
-        severe_storm = df.filter(col("FX_ms") > 25)
+        severe_storm = df.filter(col("FX") > 25)
         stat = get_stats(severe_storm, "Severe Storm (>25 m/s)")
         if stat:
             results.append(stat)
 
         # Hurricane force (>32.7 m/s = 118 km/h)
-        hurricane = df.filter(col("FX_ms") > 32.7)
+        hurricane = df.filter(col("FX") > 32.7)
         stat = get_stats(hurricane, "Hurricane Force (>32.7 m/s)")
         if stat:
             results.append(stat)
 
-    if "FF_ms" in df.columns:
+    if "FF" in df.columns:
         # Strong sustained wind (>15 m/s)
-        strong_wind = df.filter(col("FF_ms") > 15)
+        strong_wind = df.filter(col("FF") > 15)
         stat = get_stats(strong_wind, "Strong Wind (>15 m/s mean)")
         if stat:
             results.append(stat)
@@ -781,35 +768,31 @@ def analyze_true_extreme_events(df):
 
     # === COMPOUND CONDITIONS (Most Dangerous) ===
     # Ice conditions: frost + precipitation
-    if "T_celsius" in df.columns and "DR_minutes" in df.columns:
+    if "T" in df.columns and "DR_minutes" in df.columns:
         ice_risk = df.filter(
-            (col("T_celsius") < 2) & (col("T_celsius") > -5) & (col("DR_minutes") > 0)
+            (col("T") < 2) & (col("T") > -5) & (col("DR_minutes") > 0)
         )
         stat = get_stats(ice_risk, "ICE RISK (near-freezing + rain)")
         if stat:
             results.append(stat)
 
         # Freezing rain
-        freezing_rain = df.filter((col("T_celsius") < 0) & (col("DR_minutes") > 10))
+        freezing_rain = df.filter((col("T") < 0) & (col("DR_minutes") > 10))
         stat = get_stats(freezing_rain, "FREEZING RAIN (<0°C + rain)")
         if stat:
             results.append(stat)
 
     # Storm + rain
-    if "FX_ms" in df.columns and "DR_minutes" in df.columns:
-        storm_rain = df.filter((col("FX_ms") > 20) & (col("DR_minutes") > 10))
+    if "FX" in df.columns and "DR_minutes" in df.columns:
+        storm_rain = df.filter((col("FX") > 20) & (col("DR_minutes") > 10))
         stat = get_stats(storm_rain, "STORM + RAIN (gusts>20 + rain)")
         if stat:
             results.append(stat)
 
     # Winter storm: cold + wind + precipitation
-    if (
-        "T_celsius" in df.columns
-        and "FX_ms" in df.columns
-        and "DR_minutes" in df.columns
-    ):
+    if "T" in df.columns and "FX" in df.columns and "DR_minutes" in df.columns:
         winter_storm = df.filter(
-            (col("T_celsius") < 2) & (col("FX_ms") > 15) & (col("DR_minutes") > 5)
+            (col("T") < 2) & (col("FX") > 15) & (col("DR_minutes") > 5)
         )
         stat = get_stats(winter_storm, "WINTER STORM (cold+wind+precip)")
         if stat:
