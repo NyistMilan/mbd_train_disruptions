@@ -11,7 +11,7 @@ SERVICES_PATH = MASTER_BASE  # Master data is directly here with year partitions
 OUTPUT_PATH = "final_project/data/master/services_with_weather"
 
 # Weather columns to keep (most relevant for delay analysis)
-# Based on actual KNMI data schema
+# Based on actual KNMI data schema - units as provided (no conversion needed)
 WEATHER_COLS_TO_KEEP = [
     "station",
     "time",
@@ -19,29 +19,34 @@ WEATHER_COLS_TO_KEEP = [
     "lon",
     "stationname",
     # Temperature
-    "T",  # Air temperature (0.1 °C)
-    "T10N",  # Minimum temperature at 10cm (0.1 °C)
-    "TD",  # Dew point temperature (0.1 °C)
+    "T",  # Air temperature (°C)
+    "T10N",  # Minimum temperature at 10cm (°C)
+    "TD",  # Dew point temperature (°C)
     # Humidity
     "U",  # Relative humidity (%)
-    "RH",  # Relative humidity (alternative)
+    "RH",  # Precipitation amount (mm)
     # Precipitation
-    "DR",  # Precipitation duration (0.1 hour)
+    "DR",  # Precipitation duration (hours)
     # Wind
-    "DD",  # Wind direction (degrees)
-    "FF",  # Mean wind speed (0.1 m/s)
-    "FH",  # Hourly mean wind speed (0.1 m/s)
-    "FX",  # Maximum wind gust (0.1 m/s)
+    "DD",  # Wind direction (degrees, 360=N, 90=E, 180=S, 270=W)
+    "FF",  # Past 10-min mean wind speed (m/s)
+    "FH",  # Hourly mean wind speed (m/s)
+    "FX",  # Maximum wind gust (m/s)
     # Visibility & clouds
-    "VV",  # Visibility (0-49: code, 50-89: km)
-    "N",  # Cloud cover (octants)
+    "VV",  # Visibility code (0-49: 100m steps, 50+: km ranges)
+    "N",  # Cloud cover (okta, 9=sky invisible)
     # Weather phenomena
-    "WW",  # Present weather code
+    "WW",  # Present weather code (WMO 4680)
+    "W1",  # Fog indicator (0/1)
+    "W2",  # Rain indicator (0/1)
+    "W3",  # Snow indicator (0/1)
+    "W5",  # Thunder indicator (0/1)
+    "W6",  # Ice formation indicator (0/1)
     # Pressure
-    "P",  # Air pressure (0.1 hPa)
+    "P",  # Air pressure at sea level (hPa)
     # Sunshine
-    "SQ",  # Sunshine duration (0.1 hour)
-    "Q",  # Global radiation (J/cm2)
+    "SQ",  # Sunshine duration (hours)
+    "Q",  # Global solar radiation (J/cm²)
 ]
 
 spark = (
