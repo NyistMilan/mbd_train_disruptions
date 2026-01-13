@@ -104,7 +104,7 @@ def preprocess_data(df):
     if "DR" in df.columns:
         df = df.withColumn("DR_minutes", col("DR").cast(DoubleType()) * 6)
 
-    # Create binary delay indicators
+    # Create binary delay indicators with multiple thresholds
     for delay_col in DELAY_COLS:
         if delay_col in df.columns:
             df = df.withColumn(
@@ -113,6 +113,26 @@ def preprocess_data(df):
             df = df.withColumn(
                 f"{delay_col}_significant", when(col(delay_col) > 5, 1).otherwise(0)
             )
+            # New: severe delays (>15 min)
+            df = df.withColumn(
+                f"{delay_col}_severe", when(col(delay_col) > 15, 1).otherwise(0)
+            )
+            # New: very severe delays (>30 min)
+            df = df.withColumn(
+                f"{delay_col}_very_severe", when(col(delay_col) > 30, 1).otherwise(0)
+            )
+
+    # Create cancellation indicator if available
+    if "stop_arrival_cancelled" in df.columns:
+        df = df.withColumn(
+            "is_cancelled",
+            when(col("stop_arrival_cancelled") == True, 1).otherwise(0)
+        )
+    elif "service_completely_cancelled" in df.columns:
+        df = df.withColumn(
+            "is_cancelled",
+            when(col("service_completely_cancelled") == True, 1).otherwise(0)
+        )
 
     # Create weather categories
     if "T_celsius" in df.columns:
@@ -506,19 +526,297 @@ def generate_aggregated_data_for_plots(df):
     return aggregations
 
 
-def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path):
+def calculate_correlations_by_delay_metric(df):
+    """Calculate correlations for different delay severity levels."""
+    print(f"\n{'='*70}")
+    print("CORRELATIONS BY DELAY METRIC")
+    print(f"{'='*70}")
+
+    available_weather = [c for c in WEATHER_COLS if c in df.columns]
+    
+    # Different delay metrics to analyze
+    delay_metrics = {
+        "any_delay": "stop_arrival_delay_binary",
+        "significant_delay_gt5min": "stop_arrival_delay_significant", 
+        "severe_delay_gt15min": "stop_arrival_delay_severe",
+        "very_severe_delay_gt30min": "stop_arrival_delay_very_severe",
+    }
+    
+    # Add cancellation if available
+    if "is_cancelled" in df.columns:
+        delay_metrics["cancellation"] = "is_cancelled"
+
+    results = []
+
+    for metric_name, metric_col in delay_metrics.items():
+        if metric_col not in df.columns:
+            continue
+            
+        print(f"\nAnalyzing: {metric_name}")
+        
+        for weather_col in available_weather:
+            pair_df = df.select(weather_col, metric_col).dropna()
+            n_samples = pair_df.count()
+
+            if n_samples < 100:
+                continue
+
+            correlation = pair_df.select(
+                corr(
+                    col(weather_col).cast(DoubleType()),
+                    col(metric_col).cast(DoubleType()),
+                )
+            ).collect()[0][0]
+
+            if correlation is not None:
+                results.append({
+                    "delay_metric": metric_name,
+                    "weather_variable": weather_col,
+                    "weather_label": WEATHER_LABELS.get(weather_col, weather_col),
+                    "n_samples": n_samples,
+                    "correlation": correlation,
+                    "abs_correlation": abs(correlation),
+                })
+
+    if results:
+        corr_df = spark.createDataFrame(results)
+        corr_df = corr_df.orderBy(
+            col("delay_metric"), 
+            col("abs_correlation").desc()
+        )
+        print("\nCorrelations by Delay Metric:")
+        corr_df.show(50, truncate=False)
+        return corr_df
+
+    return None
+
+
+def analyze_true_extreme_events(df):
+    """Analyze delay patterns during truly extreme weather events."""
+    print(f"\n{'='*70}")
+    print("TRUE EXTREME WEATHER EVENTS ANALYSIS")
+    print(f"{'='*70}")
+
+    results = []
+    
+    # Calculate baseline statistics first
+    baseline_stats = df.agg(
+        mean("stop_arrival_delay").alias("mean_delay"),
+        mean("stop_arrival_delay_binary").alias("delay_rate"),
+        mean("stop_arrival_delay_significant").alias("sig_delay_rate"),
+        mean("stop_arrival_delay_severe").alias("severe_delay_rate"),
+        count("*").alias("count"),
+    ).collect()[0]
+    
+    baseline = {
+        "condition": "BASELINE (All Data)",
+        "mean_delay": float(baseline_stats["mean_delay"]) if baseline_stats["mean_delay"] else 0.0,
+        "delay_rate_pct": float(baseline_stats["delay_rate"]) * 100 if baseline_stats["delay_rate"] else 0.0,
+        "sig_delay_rate_pct": float(baseline_stats["sig_delay_rate"]) * 100 if baseline_stats["sig_delay_rate"] else 0.0,
+        "severe_delay_rate_pct": float(baseline_stats["severe_delay_rate"]) * 100 if baseline_stats["severe_delay_rate"] else 0.0,
+        "n_records": int(baseline_stats["count"]),
+    }
+    results.append(baseline)
+
+    def get_stats(filtered_df, condition_name):
+        """Helper to get stats for a filtered dataframe."""
+        stats = filtered_df.agg(
+            mean("stop_arrival_delay").alias("mean_delay"),
+            mean("stop_arrival_delay_binary").alias("delay_rate"),
+            mean("stop_arrival_delay_significant").alias("sig_delay_rate"),
+            mean("stop_arrival_delay_severe").alias("severe_delay_rate"),
+            count("*").alias("count"),
+        ).collect()[0]
+        
+        if stats["count"] > 0:
+            return {
+                "condition": condition_name,
+                "mean_delay": float(stats["mean_delay"]) if stats["mean_delay"] else 0.0,
+                "delay_rate_pct": float(stats["delay_rate"]) * 100 if stats["delay_rate"] else 0.0,
+                "sig_delay_rate_pct": float(stats["sig_delay_rate"]) * 100 if stats["sig_delay_rate"] else 0.0,
+                "severe_delay_rate_pct": float(stats["severe_delay_rate"]) * 100 if stats["severe_delay_rate"] else 0.0,
+                "n_records": int(stats["count"]),
+            }
+        return None
+
+    # === EXTREME TEMPERATURE ===
+    if "T_celsius" in df.columns:
+        # Severe frost (<-5°C)
+        severe_frost = df.filter(col("T_celsius") < -5)
+        stat = get_stats(severe_frost, "Severe Frost (<-5°C)")
+        if stat: results.append(stat)
+        
+        # Frost (<0°C)
+        frost = df.filter(col("T_celsius") < 0)
+        stat = get_stats(frost, "Frost (<0°C)")
+        if stat: results.append(stat)
+        
+        # Heat wave (>30°C)
+        heat = df.filter(col("T_celsius") > 30)
+        stat = get_stats(heat, "Heat Wave (>30°C)")
+        if stat: results.append(stat)
+
+    # === EXTREME WIND ===
+    if "FX_ms" in df.columns:
+        # Storm force gusts (>20 m/s = 72 km/h)
+        storm_gusts = df.filter(col("FX_ms") > 20)
+        stat = get_stats(storm_gusts, "Storm Gusts (>20 m/s)")
+        if stat: results.append(stat)
+        
+        # Severe storm gusts (>25 m/s = 90 km/h)
+        severe_storm = df.filter(col("FX_ms") > 25)
+        stat = get_stats(severe_storm, "Severe Storm (>25 m/s)")
+        if stat: results.append(stat)
+        
+        # Hurricane force (>32.7 m/s = 118 km/h)
+        hurricane = df.filter(col("FX_ms") > 32.7)
+        stat = get_stats(hurricane, "Hurricane Force (>32.7 m/s)")
+        if stat: results.append(stat)
+
+    if "FF_ms" in df.columns:
+        # Strong sustained wind (>15 m/s)
+        strong_wind = df.filter(col("FF_ms") > 15)
+        stat = get_stats(strong_wind, "Strong Wind (>15 m/s mean)")
+        if stat: results.append(stat)
+
+    # === EXTREME PRECIPITATION ===
+    if "DR_minutes" in df.columns:
+        # Continuous rain (>45 min/hour)
+        continuous_rain = df.filter(col("DR_minutes") > 45)
+        stat = get_stats(continuous_rain, "Continuous Rain (>45 min/hr)")
+        if stat: results.append(stat)
+
+    # === LOW VISIBILITY ===
+    if "VV" in df.columns:
+        # Very low visibility (<1km, VV codes < 50)
+        low_vis = df.filter(col("VV") < 20)
+        stat = get_stats(low_vis, "Very Low Visibility (<2km)")
+        if stat: results.append(stat)
+        
+        # Fog (VV < 10)
+        fog = df.filter(col("VV") < 10)
+        stat = get_stats(fog, "Fog/Dense Fog (<1km)")
+        if stat: results.append(stat)
+
+    # === COMPOUND CONDITIONS (Most Dangerous) ===
+    # Ice conditions: frost + precipitation
+    if "T_celsius" in df.columns and "DR_minutes" in df.columns:
+        ice_risk = df.filter(
+            (col("T_celsius") < 2) & 
+            (col("T_celsius") > -5) & 
+            (col("DR_minutes") > 0)
+        )
+        stat = get_stats(ice_risk, "ICE RISK (near-freezing + rain)")
+        if stat: results.append(stat)
+        
+        # Freezing rain
+        freezing_rain = df.filter(
+            (col("T_celsius") < 0) & 
+            (col("DR_minutes") > 10)
+        )
+        stat = get_stats(freezing_rain, "FREEZING RAIN (<0°C + rain)")
+        if stat: results.append(stat)
+
+    # Storm + rain
+    if "FX_ms" in df.columns and "DR_minutes" in df.columns:
+        storm_rain = df.filter(
+            (col("FX_ms") > 20) & 
+            (col("DR_minutes") > 10)
+        )
+        stat = get_stats(storm_rain, "STORM + RAIN (gusts>20 + rain)")
+        if stat: results.append(stat)
+
+    # Winter storm: cold + wind + precipitation
+    if "T_celsius" in df.columns and "FX_ms" in df.columns and "DR_minutes" in df.columns:
+        winter_storm = df.filter(
+            (col("T_celsius") < 2) & 
+            (col("FX_ms") > 15) & 
+            (col("DR_minutes") > 5)
+        )
+        stat = get_stats(winter_storm, "WINTER STORM (cold+wind+precip)")
+        if stat: results.append(stat)
+
+    if results:
+        extreme_df = spark.createDataFrame(results)
+        print("\nTrue Extreme Weather Events Impact:")
+        extreme_df.orderBy(col("mean_delay").desc()).show(30, truncate=False)
+        return extreme_df
+
+    return None
+
+
+def analyze_delay_severity_distribution(df):
+    """Analyze how delay severity changes with weather conditions."""
+    print(f"\n{'='*70}")
+    print("DELAY SEVERITY DISTRIBUTION BY WEATHER")
+    print(f"{'='*70}")
+
+    results = {}
+
+    # For each weather category, show the distribution of delay severities
+    categories = [
+        ("temp_category", "Temperature"),
+        ("wind_category", "Wind"),
+        ("rain_category", "Precipitation"),
+    ]
+
+    for cat_col, cat_name in categories:
+        if cat_col not in df.columns:
+            continue
+
+        severity_stats = (
+            df.groupBy(cat_col)
+            .agg(
+                count("*").alias("total_count"),
+                F.sum("stop_arrival_delay_binary").alias("any_delay_count"),
+                F.sum("stop_arrival_delay_significant").alias("sig_delay_count"),
+                F.sum("stop_arrival_delay_severe").alias("severe_delay_count"),
+                F.sum("stop_arrival_delay_very_severe").alias("very_severe_count"),
+                mean("stop_arrival_delay").alias("mean_delay"),
+                F.expr("percentile_approx(stop_arrival_delay, 0.5)").alias("median_delay"),
+                F.expr("percentile_approx(stop_arrival_delay, 0.95)").alias("p95_delay"),
+                F.expr("percentile_approx(stop_arrival_delay, 0.99)").alias("p99_delay"),
+            )
+            .withColumn("any_delay_pct", col("any_delay_count") / col("total_count") * 100)
+            .withColumn("sig_delay_pct", col("sig_delay_count") / col("total_count") * 100)
+            .withColumn("severe_delay_pct", col("severe_delay_count") / col("total_count") * 100)
+            .withColumn("very_severe_pct", col("very_severe_count") / col("total_count") * 100)
+            .orderBy(cat_col)
+        )
+
+        results[cat_name.lower()] = severity_stats
+        print(f"\nDelay Severity Distribution by {cat_name}:")
+        severity_stats.select(
+            cat_col, "total_count", "mean_delay", "median_delay", 
+            "p95_delay", "p99_delay", "any_delay_pct", "sig_delay_pct", 
+            "severe_delay_pct", "very_severe_pct"
+        ).show(truncate=False)
+
+    return results
+
+
+def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path,
+                 corr_by_metric_df=None, true_extreme_df=None, severity_dist=None):
     """Save all analysis results to HDFS."""
     print(f"\n{'='*70}")
     print("SAVING RESULTS")
     print(f"{'='*70}")
 
-    # Save correlations
+    # Save correlations (baseline)
     if corr_df is not None:
         corr_path = f"{output_path}/correlations"
         corr_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
             corr_path
         )
         print(f"Saved correlations to: {corr_path}")
+
+    # Save correlations by delay metric (new)
+    if corr_by_metric_df is not None:
+        corr_metric_path = f"{output_path}/correlations_by_metric"
+        corr_by_metric_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
+            corr_metric_path
+        )
+        print(f"Saved correlations by metric to: {corr_metric_path}")
 
     # Save delay stats
     for name, stats_df in delay_stats.items():
@@ -528,13 +826,30 @@ def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path):
         )
         print(f"Saved {name} stats to: {stats_path}")
 
-    # Save extreme weather analysis
+    # Save extreme weather analysis (baseline)
     if extreme_df is not None:
         extreme_path = f"{output_path}/extreme_weather"
         extreme_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
             extreme_path
         )
         print(f"Saved extreme weather analysis to: {extreme_path}")
+
+    # Save true extreme events analysis (new)
+    if true_extreme_df is not None:
+        true_extreme_path = f"{output_path}/true_extreme_events"
+        true_extreme_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
+            true_extreme_path
+        )
+        print(f"Saved true extreme events to: {true_extreme_path}")
+
+    # Save severity distribution (new)
+    if severity_dist is not None:
+        for name, dist_df in severity_dist.items():
+            dist_path = f"{output_path}/severity_distribution_{name}"
+            dist_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
+                dist_path
+            )
+            print(f"Saved {name} severity distribution to: {dist_path}")
 
     # Save aggregated data for plotting
     for name, agg_df in aggregations.items():
@@ -624,6 +939,13 @@ df = df.cache()
 # Preprocess
 df = preprocess_data(df)
 
+# ============================================
+# BASELINE ANALYSIS (Original)
+# ============================================
+print("\n" + "=" * 70)
+print("PART 1: BASELINE ANALYSIS")
+print("=" * 70)
+
 # Calculate correlations
 corr_df = calculate_correlations(df)
 if corr_df is not None:
@@ -633,14 +955,43 @@ if corr_df is not None:
 # Calculate delay stats by category
 delay_stats = calculate_delay_stats_by_category(df)
 
-# Extreme weather analysis
+# Extreme weather analysis (baseline thresholds)
 extreme_df = analyze_extreme_weather(df)
 
 # Generate aggregated data for visualization
 aggregations = generate_aggregated_data_for_plots(df)
 
-# Save all results
-save_results(corr_df, delay_stats, extreme_df, aggregations, OUTPUT_PATH)
+# ============================================
+# EXTENDED ANALYSIS (New)
+# ============================================
+print("\n" + "=" * 70)
+print("PART 2: EXTENDED ANALYSIS - DIFFERENT DELAY METRICS")
+print("=" * 70)
+
+# Correlations with different delay severity thresholds
+corr_by_metric_df = calculate_correlations_by_delay_metric(df)
+
+# True extreme events with stricter thresholds
+true_extreme_df = analyze_true_extreme_events(df)
+
+# Delay severity distribution by weather
+severity_dist = analyze_delay_severity_distribution(df)
+
+# ============================================
+# SAVE ALL RESULTS
+# ============================================
+
+# Save all results (baseline + extended)
+save_results(
+    corr_df, 
+    delay_stats, 
+    extreme_df, 
+    aggregations, 
+    OUTPUT_PATH,
+    corr_by_metric_df=corr_by_metric_df,
+    true_extreme_df=true_extreme_df,
+    severity_dist=severity_dist
+)
 
 # Print summary report
 print_summary_report(corr_df, delay_stats, extreme_df, total_count)
