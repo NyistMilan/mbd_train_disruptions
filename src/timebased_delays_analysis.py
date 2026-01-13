@@ -26,9 +26,11 @@ df = (
         "stop_departure_delay",
     )
     .withColumn("event_ts", F.coalesce(F.col("stop_arrival_ts"), F.col("stop_departure_ts")))
-    .withColumn("service_date", F.when(F.col("event_ts").isNotNull(), F.to_date(F.col("event_ts"))).otherwise(F.col("service_date")))
-    .withColumn("hour", F.when(F.col("event_ts").isNotNull(), F.hour(F.col("event_ts"))).otherwise(F.lit(-1)))
-    .withColumn("missing_event_ts", F.col("event_ts").isNull())
+    .filter(F.col("event_ts").isNotNull())
+    .withColumn("service_date", F.to_date(F.col("event_ts")))
+    .filter(~((F.year(F.col("service_date")) == 2025) & (F.month(F.col("service_date")) == 12)))
+    .withColumn("hour", F.hour(F.col("event_ts")))
+    .withColumn("missing_event_ts", F.lit(False))
     .withColumn("delay_val", F.coalesce(F.col("stop_arrival_delay"), F.col("stop_departure_delay")))
     .withColumn("delay_val_filled", F.coalesce(F.col("delay_val"), F.lit(0.0)).cast("double"))
     .cache()
@@ -54,6 +56,15 @@ services_per_hour = (
     )
 )
 
+# Flags per service: short delay (<3 min) and long delay (>10 min)
+services_per_hour = services_per_hour.withColumn(
+    "svc_short_delay",
+    (F.col("svc_max_delay") > 0) & (F.col("svc_max_delay") < 3)
+).withColumn(
+    "svc_long_delay",
+    F.col("svc_max_delay") > 10
+)
+
 # Number of distinct services per day
 daily_totals = (
     services_per_hour
@@ -70,11 +81,11 @@ hourly = (
     .agg(
         F.count("service_rdt_id").alias("services_in_hour"),
         F.sum(F.col("svc_completely_cancelled")).alias("completely_cancelled"),
-        F.sum(F.col("svc_partly_cancelled")).alias("partly_cancelled"),
+        F.sum(F.when(F.col("svc_completely_cancelled") == 1, 0).otherwise(F.col("svc_partly_cancelled"))).alias("partly_cancelled"),
         F.sum(F.when(F.col("svc_max_delay") > 0, 1).otherwise(0)).alias("delayed_count"),
         F.sum(F.when(F.col("svc_max_delay") == 0, 1).otherwise(0)).alias("on_time_count"),
-        F.avg(F.col("svc_max_delay")).alias("max_avg_delay_all_services"),
-        F.avg(F.when(F.col("svc_max_delay") > 0, F.col("svc_max_delay")).cast("double")).alias("max_avg_delay_delays_only"),
+        F.sum(F.when(F.col("svc_short_delay"), 1).otherwise(0)).alias("short_delay_count"),
+        F.sum(F.when(F.col("svc_long_delay"), 1).otherwise(0)).alias("long_delay_count"),
         F.avg(F.col("svc_avg_delay")).alias("avg_avg_delay_all_services"),
         F.avg(F.when(F.col("svc_avg_delay") > 0, F.col("svc_avg_delay")).cast("double")).alias("avg_avg_delay_delays_only"),
     )
@@ -113,8 +124,8 @@ hourly_with_day = (
         F.when(F.col("services_in_hour") > 0, (F.col("partly_cancelled") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_partly_cancelled"),
         F.when(F.col("services_in_hour") > 0, (F.col("delayed_count") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_delayed"),
         F.when(F.col("services_in_hour") > 0, (F.col("on_time_count") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_on_time"),
-        "max_avg_delay_all_services",
-        "max_avg_delay_delays_only",
+        F.when(F.col("services_in_hour") > 0, (F.col("short_delay_count") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_short_delay"),
+        F.when(F.col("services_in_hour") > 0, (F.col("long_delay_count") / F.col("services_in_hour")).cast("double")).otherwise(F.lit(0.0)).alias("pct_long_delay"),
         "avg_avg_delay_all_services",
         "avg_avg_delay_delays_only",
         "services_in_hour",
@@ -123,6 +134,8 @@ hourly_with_day = (
         "partly_cancelled",
         "delayed_count",
         "on_time_count",
+        "short_delay_count",
+        "long_delay_count",
     )
 )
 

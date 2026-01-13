@@ -122,6 +122,22 @@ if __name__ == "__main__":
     events = expand_singleton_holidays_to_year(events, max_year=2025)
     logging.info("Expanded singleton holidays: %d -> %d", orig_count, len(events))
 
+    # Ensure New Year's Eve is present for each year in the range (avoid duplicates)
+    existing = set(events)
+    if events:
+        min_year = min(int(d.split("-")[0]) for d, _ in events)
+    else:
+        min_year = 2019
+    added = 0
+    for y in range(min_year, 2026):
+        tup = (f"{y}-12-31", "New Year's Eve")
+        if tup not in existing:
+            events.append(tup)
+            existing.add(tup)
+            added += 1
+    if added:
+        logging.info("Added %d New Year's Eve entries", added)
+
     def save_holidays_to_csv(path, holidays=None):
         """Save holidays (list of (date_iso, summary)) to CSV at path.
 
