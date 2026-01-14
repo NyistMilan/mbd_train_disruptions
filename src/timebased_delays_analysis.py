@@ -1,8 +1,8 @@
 from pyspark.sql import SparkSession, functions as F
 
 MASTER_PATH = "/user/s3692612/final_project/data/master"
-ANALYSIS_OUT = "/user/s3082474/final_project/data/analysis/timebased_delays"
-HOLIDAYS_CSV = "/user/s3082474/final_project/holidays.csv"
+ANALYSIS_OUT = "/user/s3082474/output"
+HOLIDAYS_CSV = "/user/s3082474/holidays.csv"
 
 spark = (
     SparkSession.builder
@@ -143,14 +143,34 @@ hourly_with_day = (
 holidays_spark = (
     spark.read.option("header", "true").csv(HOLIDAYS_CSV)
     .withColumn("event_date", F.to_date(F.col("event_date")))
+    .select(
+        F.col("event_date"),
+        F.col("name").alias("holiday_name"),
+        F.col("category").alias("holiday_category")
+    )
 )
 
 # join on service_date to attach holiday name
 hourly_with_holiday = (
-    hourly_with_day.join(holidays_spark, hourly_with_day.service_date == holidays_spark.event_date, "left")
-    .withColumn("holiday", F.col("holiday"))
-    .withColumn("is_holiday", F.col("holiday").isNotNull())
-    .select(*[c for c in hourly_with_day.columns], "holiday", "is_holiday")
+    hourly_with_day
+    .join(
+        holidays_spark,
+        hourly_with_day.service_date == holidays_spark.event_date,
+        "left"
+    )
+    .withColumn(
+        "holiday_name",
+        F.coalesce(F.col("holiday_name"), F.lit("No holiday"))
+    )
+    .withColumn(
+        "holiday_category",
+        F.coalesce(F.col("holiday_category"), F.lit("No holiday"))
+    )
+    .select(
+        *[c for c in hourly_with_day.columns],
+        "holiday_name",
+        "holiday_category"
+    )
 )
 
 # Output the result (include holiday join)
