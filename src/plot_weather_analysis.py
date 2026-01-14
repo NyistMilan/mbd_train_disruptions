@@ -19,6 +19,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import t
 
 # Configuration
 DATA_DIR = Path("./analysis_data")  # Downloaded from HDFS
@@ -84,6 +85,47 @@ def plot_correlation_heatmap(corr_df: pd.DataFrame, output_dir: Path):
     plt.close()
     print(f"Saved: {output_dir / 'correlation_heatmap.png'}")
 
+def plot_correlation_significance_heatmap(corr_df: pd.DataFrame, output_dir: Path):
+    """Create a heatmap of weather-delay correlation significance (p-values)."""
+    if corr_df is None or corr_df.empty:
+        print("No correlation data available")
+        return
+
+    print("Creating correlation significance heatmap...")
+
+    alpha = 0.05
+    
+    # calculate p-values from correlation coefficients
+    corr_df["t"] = corr_df["correlation"] * np.sqrt(corr_df["n_samples"] - 2) / np.sqrt(1 - corr_df["correlation"] ** 2)
+    
+    corr_df["p_value"] = 2 * (1 - t.cdf(np.abs(corr_df["t"]), df=corr_df["n_samples"] - 2))
+    
+    # Pivot for heatmap
+    pivot = corr_df.pivot_table(
+        index="weather_variable", columns="delay_variable", values="p_value"
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sns.heatmap(
+        pivot,
+        annot=True,
+        cmap="YlGnBu",
+        fmt=".3f",
+        vmin=0,
+        vmax=0.1,
+        ax=ax,
+        linewidths=0.5,
+    )
+    ax.set_title(
+        "Weather-Delay Correlation Significance\n(P-values)", fontsize=14, fontweight="bold"
+    )
+    ax.set_xlabel("Delay Variable", fontsize=12)
+    ax.set_ylabel("Weather Variable", fontsize=12)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "correlation_significance_heatmap.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {output_dir / 'correlation_significance_heatmap.png'}")
 
 def plot_correlation_bar(corr_df: pd.DataFrame, output_dir: Path):
     """Create a bar chart of correlations for arrival delay."""
@@ -1036,6 +1078,7 @@ def main():
     print("\n--- Generating baseline visualizations ---")
 
     plot_correlation_heatmap(corr_df, OUTPUT_DIR)
+    plot_correlation_significance_heatmap(corr_df, OUTPUT_DIR)
     plot_correlation_bar(corr_df, OUTPUT_DIR)
     plot_delay_by_category(delay_stats, OUTPUT_DIR)
     plot_delay_rate_by_category(delay_stats, OUTPUT_DIR)
