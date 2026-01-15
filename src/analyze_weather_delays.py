@@ -42,51 +42,52 @@ from pyspark.sql.functions import col, when, count, mean, stddev, corr
 from pyspark.sql.types import DoubleType
 from datetime import datetime
 
+
 # === Logging Class for HDFS Output ===
 class HDFSLogger:
     """Logger that collects output and writes to HDFS as a text file."""
-    
+
     def __init__(self):
         self.log_lines = []
         self.start_time = datetime.now()
-    
+
     def log(self, message: str = ""):
         """Log a message (also prints to stdout)."""
         print(message)
         self.log_lines.append(message)
-    
+
     def section(self, title: str):
         """Log a section header."""
         self.log("\n" + "=" * 70)
         self.log(title)
         self.log("=" * 70)
-    
+
     def subsection(self, title: str):
         """Log a subsection header."""
         self.log("\n" + "-" * 70)
         self.log(title)
         self.log("-" * 70)
-    
+
     def save_to_hdfs(self, spark, output_path: str):
         """Save the log to HDFS as a text file."""
         # Add timing info
         end_time = datetime.now()
         duration = end_time - self.start_time
-        
+
         self.log("\n" + "=" * 70)
         self.log("JOB TIMING")
         self.log("=" * 70)
         self.log(f"Start time: {self.start_time}")
         self.log(f"End time: {end_time}")
         self.log(f"Duration: {duration}")
-        
+
         # Write to HDFS
         log_content = "\n".join(self.log_lines)
         log_path = f"{output_path}/analysis_log.txt"
-        
+
         # Create RDD from log content and save as text file
         log_rdd = spark.sparkContext.parallelize([log_content], 1)
-        
+
         # Delete existing log if present
         try:
             hadoop_conf = spark._jsc.hadoopConfiguration()
@@ -96,7 +97,7 @@ class HDFSLogger:
                 fs.delete(path, True)
         except Exception as e:
             print(f"Note: Could not delete existing log: {e}")
-        
+
         log_rdd.saveAsTextFile(log_path)
         print(f"\nLog saved to: {log_path}")
         print("To view the log, run:")
@@ -114,34 +115,34 @@ OUTPUT_PATH = "/user/s3544648/final_project/data/analysis"
 # All weather columns from KNMI dataset
 WEATHER_COLS = [
     # Temperature
-    "T",       # Air temperature (°C)
-    "T10N",    # Minimum temperature at 10cm (°C)
-    "TD",      # Dew point temperature (°C)
+    "T",  # Air temperature (°C)
+    "T10N",  # Minimum temperature at 10cm (°C)
+    "TD",  # Dew point temperature (°C)
     # Humidity
-    "U",       # Relative humidity (%)
+    "U",  # Relative humidity (%)
     # Precipitation
-    "RH",      # Precipitation amount (mm)
-    "DR",      # Precipitation duration (hours)
+    "RH",  # Precipitation amount (mm)
+    "DR",  # Precipitation duration (hours)
     # Wind
-    "DD",      # Wind direction (degrees)
-    "FF",      # Past 10-min mean wind speed (m/s)
-    "FH",      # Hourly mean wind speed (m/s)
-    "FX",      # Maximum wind gust (m/s)
+    "DD",  # Wind direction (degrees)
+    "FF",  # Past 10-min mean wind speed (m/s)
+    "FH",  # Hourly mean wind speed (m/s)
+    "FX",  # Maximum wind gust (m/s)
     # Visibility & clouds
-    "VV",      # Visibility code
-    "N",       # Cloud cover (okta)
+    "VV",  # Visibility code
+    "N",  # Cloud cover (okta)
     # Weather phenomena
-    "WW",      # Present weather code
-    "W1",      # Fog indicator (0/1)
-    "W2",      # Rain indicator (0/1)
-    "W3",      # Snow indicator (0/1)
-    "W5",      # Thunder indicator (0/1)
-    "W6",      # Ice formation indicator (0/1)
+    "WW",  # Present weather code
+    "W1",  # Fog indicator (0/1)
+    "W2",  # Rain indicator (0/1)
+    "W3",  # Snow indicator (0/1)
+    "W5",  # Thunder indicator (0/1)
+    "W6",  # Ice formation indicator (0/1)
     # Pressure
-    "P",       # Air pressure at sea level (hPa)
+    "P",  # Air pressure at sea level (hPa)
     # Sunshine
-    "SQ",      # Sunshine duration (hours)
-    "Q",       # Global solar radiation (J/cm²)
+    "SQ",  # Sunshine duration (hours)
+    "Q",  # Global solar radiation (J/cm²)
 ]
 
 # Human-readable names for weather variables
@@ -203,7 +204,7 @@ def preprocess_data(df):
 
     # Weather data is already in correct units from KNMI:
     # T, TD: °C | FF, FH, FX: m/s | DR: hours | P: hPa
-    
+
     # Only convert DR from hours to minutes for easier interpretation
     if "DR" in df.columns:
         df = df.withColumn("DR_minutes", col("DR").cast(DoubleType()) * 60)
@@ -605,6 +606,88 @@ def generate_aggregated_data_for_plots(df):
             .orderBy("visibility_bin")
         )
         aggregations["visibility_bins"] = visibility_bins
+
+    # Q solar radiation
+    if "Q" in df.columns:
+        solar_bins = (
+            df.withColumn(
+                "solar_bin",
+                (F.floor(col("Q") / 100) * 100).cast("int"),  # 100 J/cm² bins
+            )
+            .groupBy("solar_bin")
+            .agg(
+                mean("stop_arrival_delay").alias("mean_delay"),
+                stddev("stop_arrival_delay").alias("std_delay"),
+                count("*").alias("count"),
+            )
+            .orderBy("solar_bin")
+        )
+        aggregations["solar_bins"] = solar_bins
+
+    # SQ sunshine duration
+    if "SQ" in df.columns:
+        sunshine_bins = (
+            df.withColumn(
+                "sunshine_bin",
+                (F.floor(col("SQ"))).cast("int"),  # 1 hour bins
+            )
+            .groupBy("sunshine_bin")
+            .agg(
+                mean("stop_arrival_delay").alias("mean_delay"),
+                stddev("stop_arrival_delay").alias("std_delay"),
+                count("*").alias("count"),
+            )
+            .orderBy("sunshine_bin")
+        )
+        aggregations["sunshine_bins"] = sunshine_bins
+
+    # P air pressure
+    if "P" in df.columns:
+        pressure_bins = (
+            df.withColumn(
+                "pressure_bin",
+                (F.floor(col("P") / 5) * 5).cast("int"),  # 5 hPa bins
+            )
+            .groupBy("pressure_bin")
+            .agg(
+                mean("stop_arrival_delay").alias("mean_delay"),
+                stddev("stop_arrival_delay").alias("std_delay"),
+                count("*").alias("count"),
+            )
+            .orderBy("pressure_bin")
+        )
+        aggregations["pressure_bins"] = pressure_bins
+
+    # W2 Rain indicator
+    if "W2" in df.columns:
+        rain_indicator = (
+            df.groupBy("W2")
+            .agg(
+                mean("stop_arrival_delay").alias("mean_delay"),
+                stddev("stop_arrival_delay").alias("std_delay"),
+                count("*").alias("count"),
+            )
+            .orderBy("W2")
+        )
+        aggregations["rain_indicator"] = rain_indicator
+
+    # U Relative Humidity
+
+    if "U" in df.columns:
+        humidity_bins = (
+            df.withColumn(
+                "humidity_bin",
+                (F.floor(col("U") / 10) * 10).cast("int"),  # 10% bins
+            )
+            .groupBy("humidity_bin")
+            .agg(
+                mean("stop_arrival_delay").alias("mean_delay"),
+                stddev("stop_arrival_delay").alias("std_delay"),
+                count("*").alias("count"),
+            )
+            .orderBy("humidity_bin")
+        )
+        aggregations["humidity_bins"] = humidity_bins
 
     return aggregations
 
