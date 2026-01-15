@@ -85,6 +85,7 @@ def plot_correlation_heatmap(corr_df: pd.DataFrame, output_dir: Path):
     plt.close()
     print(f"Saved: {output_dir / 'correlation_heatmap.png'}")
 
+
 def plot_correlation_significance_heatmap(corr_df: pd.DataFrame, output_dir: Path):
     """Create a heatmap of weather-delay correlation significance (p-values)."""
     if corr_df is None or corr_df.empty:
@@ -94,12 +95,18 @@ def plot_correlation_significance_heatmap(corr_df: pd.DataFrame, output_dir: Pat
     print("Creating correlation significance heatmap...")
 
     alpha = 0.05
-    
+
     # calculate p-values from correlation coefficients
-    corr_df["t"] = corr_df["correlation"] * np.sqrt(corr_df["n_samples"] - 2) / np.sqrt(1 - corr_df["correlation"] ** 2)
-    
-    corr_df["p_value"] = 2 * (1 - t.cdf(np.abs(corr_df["t"]), df=corr_df["n_samples"] - 2))
-    
+    corr_df["t"] = (
+        corr_df["correlation"]
+        * np.sqrt(corr_df["n_samples"] - 2)
+        / np.sqrt(1 - corr_df["correlation"] ** 2)
+    )
+
+    corr_df["p_value"] = 2 * (
+        1 - t.cdf(np.abs(corr_df["t"]), df=corr_df["n_samples"] - 2)
+    )
+
     # Pivot for heatmap
     pivot = corr_df.pivot_table(
         index="weather_variable", columns="delay_variable", values="p_value"
@@ -117,15 +124,22 @@ def plot_correlation_significance_heatmap(corr_df: pd.DataFrame, output_dir: Pat
         linewidths=0.5,
     )
     ax.set_title(
-        "Weather-Delay Correlation Significance\n(P-values)", fontsize=14, fontweight="bold"
+        "Weather-Delay Correlation Significance\n(P-values)",
+        fontsize=14,
+        fontweight="bold",
     )
     ax.set_xlabel("Delay Variable", fontsize=12)
     ax.set_ylabel("Weather Variable", fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(output_dir / "correlation_significance_heatmap.png", dpi=150, bbox_inches="tight")
+    plt.savefig(
+        output_dir / "correlation_significance_heatmap.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
     plt.close()
     print(f"Saved: {output_dir / 'correlation_significance_heatmap.png'}")
+
 
 def plot_correlation_bar(corr_df: pd.DataFrame, output_dir: Path):
     """Create a bar chart of correlations for arrival delay."""
@@ -137,6 +151,9 @@ def plot_correlation_bar(corr_df: pd.DataFrame, output_dir: Path):
 
     # Filter for arrival delay only
     arrival_corr = corr_df[corr_df["delay_variable"] == "stop_arrival_delay"].copy()
+    arrival_corr = arrival_corr.sort_values("abs_correlation")
+    # take top 10 by absolute correlation
+    arrival_corr = arrival_corr.tail(5)
     arrival_corr = arrival_corr.sort_values("correlation")
 
     fig, ax = plt.subplots(figsize=(10, 6))
