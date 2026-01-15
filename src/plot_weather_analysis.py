@@ -314,20 +314,24 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
     print("Creating aggregated trend plots...")
 
     plots = [
-        ("temp_bins", "temp_bin", "Temperature (°C)", "Mean Delay vs Temperature"),
-        ("wind_bins", "wind_bin", "Wind Speed (m/s)", "Mean Delay vs Wind Speed"),
+        ("solar_bins", "solar_bin", "Solar Radiation (W/m²)", "Mean Delay vs Solar Radiation"),
+        ("rain_indicator", "W2", "Precipitation Indicator", "Mean Delay vs Precipitation Indicator"),
         (
             "rain_bins",
             "rain_bin",
             "Precipitation Duration (min)",
             "Mean Delay vs Precipitation",
         ),
+        ("sunshine_bins", "sunshine_bin", "Sunshine Duration (min)", "Mean Delay vs Sunshine"),
+        # ("wind_bins", "wind_bin", "Wind Speed (m/s)", "Mean Delay vs Wind Speed"),
         (
             "visibility_bins",
             "visibility_bin",
             "Visibility (code)",
             "Mean Delay vs Visibility",
         ),
+        ("temp_bins", "temp_bin", "Temperature (°C)", "Mean Delay vs Temperature"),
+        
     ]
 
     available = [
