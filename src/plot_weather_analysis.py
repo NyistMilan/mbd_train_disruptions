@@ -315,23 +315,10 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
 
     plots = [
         ("solar_bins", "solar_bin", "Solar Radiation (W/m²)", "Mean Delay vs Solar Radiation"),
-        # ("rain_indicator", "W2", "Precipitation Indicator", "Mean Delay vs Precipitation Indicator"),
-        (
-            "rain_bins",
-            "rain_bin",
-            "Precipitation Duration (min)",
-            "Mean Delay vs Precipitation",
-        ),
+        ("rain_bins", "rain_bin", "Precipitation Duration (min)", "Mean Delay vs Precipitation"),
         ("sunshine_bins", "sunshine_bin", "Sunshine Duration (min)", "Mean Delay vs Sunshine"),
-        # ("wind_bins", "wind_bin", "Wind Speed (m/s)", "Mean Delay vs Wind Speed"),
-        (
-            "visibility_bins",
-            "visibility_bin",
-            "Visibility (code)",
-            "Mean Delay vs Visibility",
-        ),
+        ("visibility_bins", "visibility_bin", "Visibility (code)", "Mean Delay vs Visibility"),
         ("temp_bins", "temp_bin", "Temperature (°C)", "Mean Delay vs Temperature"),
-        
     ]
 
     available = [
@@ -369,6 +356,7 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
             ax.set_xlabel(xlabel)
             ax.set_ylabel("Mean Delay (min)")
             ax.set_title(title)
+            ax.set_ylim(bottom=0)
             continue
 
         # Handle NaN values
@@ -387,13 +375,13 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Mean Delay (min)")
         ax.set_title(title)
+        ax.set_ylim(bottom=0)  # Always start y-axis at zero
 
         # Add trend line with error handling
         if len(data) >= 3:
             try:
                 x_vals = data[col].astype(float).values
                 y_vals = data["mean_delay"].astype(float).values
-                # Check for valid data
                 if np.all(np.isfinite(x_vals)) and np.all(np.isfinite(y_vals)):
                     z = np.polyfit(x_vals, y_vals, 1)
                     p = np.poly1d(z)
