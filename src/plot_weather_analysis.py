@@ -315,7 +315,7 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
 
     plots = [
         ("solar_bins", "solar_bin", "Solar Radiation (W/m²)", "Mean Delay vs Solar Radiation"),
-        ("rain_indicator", "W2", "Precipitation Indicator", "Mean Delay vs Precipitation Indicator"),
+        # ("rain_indicator", "W2", "Precipitation Indicator", "Mean Delay vs Precipitation Indicator"),
         (
             "rain_bins",
             "rain_bin",

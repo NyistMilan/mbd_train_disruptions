@@ -626,10 +626,11 @@ def generate_aggregated_data_for_plots(df):
 
     # SQ sunshine duration
     if "SQ" in df.columns:
+        # create bins of 4 minutes according sq is in hours
         sunshine_bins = (
             df.withColumn(
                 "sunshine_bin",
-                (F.floor(col("SQ"))).cast("int"),  # 1 hour bins
+                (F.floor(col("SQ") * 60 / 4) * 4).cast("int"),  # 4 min bins
             )
             .groupBy("sunshine_bin")
             .agg(
@@ -688,6 +689,8 @@ def generate_aggregated_data_for_plots(df):
             .orderBy("humidity_bin")
         )
         aggregations["humidity_bins"] = humidity_bins
+    
+    
 
     return aggregations
 
