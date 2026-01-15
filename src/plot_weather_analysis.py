@@ -331,14 +331,17 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
         print("No aggregated data available for trend plots")
         return
 
-    n_plots = len(available)
-    fig, axes = plt.subplots(1, n_plots, figsize=(4 * n_plots, 4))
-    if n_plots == 1:
-        axes = [axes]
+        n_plots = len(available)
+    n_cols = 3
+    n_rows = 2
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
+    axes = axes.flatten()
 
-    for ax, (key, col, xlabel, title) in zip(axes, available):
+    for idx, (key, col, xlabel, title) in enumerate(available):
+        ax = axes[idx]
         data = aggregations[key]
         if data.empty:
+            ax.axis('off')
             continue
 
         # Filter to bins with enough samples
@@ -375,7 +378,7 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Mean Delay (min)")
         ax.set_title(title)
-        ax.set_ylim(bottom=0)  # Always start y-axis at zero
+        ax.set_ylim(bottom=0)
 
         # Add trend line with error handling
         if len(data) >= 3:
@@ -390,6 +393,10 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
                     ax.legend()
             except (np.linalg.LinAlgError, ValueError) as e:
                 print(f"  Warning: Could not fit trend line for {key}: {e}")
+
+    # Hide unused subplots if there are fewer than 6 plots
+    for i in range(len(available), n_rows * n_cols):
+        axes[i].axis('off')
 
     plt.suptitle(
         "Weather-Delay Relationships (Aggregated)",
