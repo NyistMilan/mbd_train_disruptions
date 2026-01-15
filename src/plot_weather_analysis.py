@@ -1067,7 +1067,8 @@ def main():
         print(f"  Loaded extreme weather: {len(extreme_df)} rows")
 
     aggregations = {}
-    for agg_type in ["temp_bins", "wind_bins", "rain_bins", "visibility_bins"]:
+    for agg_type in ["temp_bins", "wind_bins", "rain_bins", "visibility_bins", 
+                     "solar_bins", "sunshine_bins", "rain_indicator"]:
         aggregations[agg_type] = load_csv_from_spark_output(
             DATA_DIR / f"aggregated_{agg_type}"
         )
