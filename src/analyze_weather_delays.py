@@ -689,8 +689,21 @@ def generate_aggregated_data_for_plots(df):
             .orderBy("humidity_bin")
         )
         aggregations["humidity_bins"] = humidity_bins
-    
-    
+
+    # WW Present weather code
+    if "WW" in df.columns:
+        weather_code_stats = (
+            df.withColumn("ww_bin", col("WW").cast("int"))
+            .groupBy("ww_bin")
+            .agg(
+                mean("stop_arrival_delay").alias("mean_delay"),
+                stddev("stop_arrival_delay").alias("std_delay"),
+                count("*").alias("count"),
+            )
+            .orderBy("ww_bin")
+            
+        )
+        aggregations["ww_bins"] = weather_code_stats
 
     return aggregations
 
