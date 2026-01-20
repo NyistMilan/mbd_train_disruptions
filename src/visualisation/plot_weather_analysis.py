@@ -22,8 +22,8 @@ import seaborn as sns
 from scipy.stats import t
 
 # Configuration
-DATA_DIR = Path("./analysis_data")  # Downloaded from HDFS
-OUTPUT_DIR = Path("./analysis_output")
+DATA_DIR = Path("../analysis_data")  # Downloaded from HDFS
+OUTPUT_DIR = Path("../analysis_output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -331,7 +331,7 @@ def plot_aggregated_trends(aggregations: dict, output_dir: Path):
         print("No aggregated data available for trend plots")
         return
 
-        n_plots = len(available)
+    n_plots = len(available)
     n_cols = 3
     n_rows = 2
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
