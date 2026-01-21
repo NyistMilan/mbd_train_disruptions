@@ -22,8 +22,8 @@ import seaborn as sns
 from scipy.stats import t
 
 # Configuration
-DATA_DIR = Path("../analysis_data")  # Downloaded from HDFS
-OUTPUT_DIR = Path("../analysis_output")
+DATA_DIR = Path("./analysis_data")  # Downloaded from HDFS
+OUTPUT_DIR = Path("./analysis_output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -1062,7 +1062,7 @@ def main():
         print(f"  Loaded extreme weather: {len(extreme_df)} rows")
 
     aggregations = {}
-    for agg_type in ["temp_bins", "wind_bins", "rain_bins", "visibility_bins", 
+    for agg_type in ["ww_bins", "wind_bins", "rain_bins", "visibility_bins", 
                      "solar_bins", "sunshine_bins", "rain_indicator"]:
         aggregations[agg_type] = load_csv_from_spark_output(
             DATA_DIR / f"aggregated_{agg_type}"
