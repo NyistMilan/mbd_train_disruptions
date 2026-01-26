@@ -1,49 +1,9 @@
-"""
-Weather-Delay Correlation Analysis Script (PySpark Version)
-
-This script analyzes the correlation between weather conditions and train delays
-using the merged services_with_weather dataset on a Spark cluster.
-
-Weather variables analyzed (from KNMI):
-- T: Temperature (°C)
-- T10N: Minimum temperature at 10cm (°C)
-- TD: Dew point temperature (°C)
-- U: Relative humidity (%)
-- RH: Precipitation amount (mm)
-- DR: Precipitation duration (hours)
-- DD: Wind direction (degrees, 360=N, 90=E, 180=S, 270=W)
-- FF: Past 10-min mean wind speed (m/s)
-- FH: Hourly mean wind speed (m/s)
-- FX: Maximum wind gust (m/s)
-- VV: Visibility code (0-49: 100m steps, 50+: km ranges)
-- N: Cloud cover (okta, 9=sky invisible)
-- WW: Present weather code (WMO 4680)
-- W1: Fog indicator (0/1)
-- W2: Rain indicator (0/1)
-- W3: Snow indicator (0/1)
-- W5: Thunder indicator (0/1)
-- W6: Ice formation indicator (0/1)
-- P: Air pressure at sea level (hPa)
-- SQ: Sunshine duration (hours)
-- Q: Global solar radiation (J/cm²)
-
-Delay metrics:
-- stop_arrival_delay: Delay at arrival (minutes)
-- stop_departure_delay: Delay at departure (minutes)
-- service_maximum_delay: Maximum delay for the entire service
-
-Usage:
-    spark-submit --deploy-mode cluster --driver-memory 4g --executor-memory 4g \\
-        src/analyze_weather_delays.py
-"""
-
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.functions import col, when, count, mean, stddev, corr
 from pyspark.sql.types import DoubleType
 from datetime import datetime
 
 
-# === Logging Class for HDFS Output ===
 class HDFSLogger:
     """Logger that collects output and writes to HDFS as a text file."""
 
@@ -104,7 +64,6 @@ class HDFSLogger:
         print(f"  hdfs dfs -cat {log_path}/part-00000")
 
 
-# Initialize logger
 logger = HDFSLogger()
 
 
@@ -202,61 +161,9 @@ def preprocess_data(df):
     """Clean and preprocess the data for analysis."""
     logger.section("PREPROCESSING DATA")
 
-    # Weather data is already in correct units from KNMI:
-    # T, TD: °C | FF, FH, FX: m/s | DR: hours | P: hPa
-
     # Only convert DR from hours to minutes for easier interpretation
     if "DR" in df.columns:
         df = df.withColumn("DR_minutes", col("DR").cast(DoubleType()) * 60)
-
-    # Create binary delay indicators (basic thresholds only)
-    for delay_col in DELAY_COLS:
-        if delay_col in df.columns:
-            df = df.withColumn(
-                f"{delay_col}_binary", when(col(delay_col) > 0, 1).otherwise(0)
-            )
-            df = df.withColumn(
-                f"{delay_col}_significant", when(col(delay_col) > 5, 1).otherwise(0)
-            )
-
-    # Create cancellation indicator if available
-    if "stop_arrival_cancelled" in df.columns:
-        df = df.withColumn(
-            "is_cancelled", when(col("stop_arrival_cancelled") == True, 1).otherwise(0)
-        )
-    elif "service_completely_cancelled" in df.columns:
-        df = df.withColumn(
-            "is_cancelled",
-            when(col("service_completely_cancelled") == True, 1).otherwise(0),
-        )
-
-    # Create weather categories
-    if "T" in df.columns:
-        df = df.withColumn(
-            "temp_category",
-            when(col("T") < 0, "Freezing (<0°C)")
-            .when(col("T") < 10, "Cold (0-10°C)")
-            .when(col("T") < 20, "Mild (10-20°C)")
-            .otherwise("Warm (>20°C)"),
-        )
-
-    if "FF" in df.columns:
-        df = df.withColumn(
-            "wind_category",
-            when(col("FF") < 5, "Calm (<5 m/s)")
-            .when(col("FF") < 10, "Light (5-10 m/s)")
-            .when(col("FF") < 15, "Moderate (10-15 m/s)")
-            .otherwise("Strong (>15 m/s)"),
-        )
-
-    if "DR_minutes" in df.columns:
-        df = df.withColumn(
-            "rain_category",
-            when(col("DR_minutes") == 0, "No Rain")
-            .when(col("DR_minutes") < 10, "Light Rain")
-            .when(col("DR_minutes") < 30, "Moderate Rain")
-            .otherwise("Heavy Rain"),
-        )
 
     logger.log("Preprocessing complete.")
     return df
@@ -309,233 +216,6 @@ def calculate_correlations(df):
         corr_df = spark.createDataFrame(results)
         corr_df = corr_df.orderBy(col("abs_correlation").desc())
         return corr_df
-
-    return None
-
-
-def calculate_delay_stats_by_category(df):
-    """Calculate delay statistics for different weather conditions."""
-    logger.section("CALCULATING DELAY RATES BY WEATHER CONDITION")
-
-    results = {}
-
-    # Stats by temperature category
-    if "temp_category" in df.columns and "stop_arrival_delay" in df.columns:
-        temp_stats = (
-            df.groupBy("temp_category")
-            .agg(
-                count("*").alias("count"),
-                mean("stop_arrival_delay").alias("mean_delay"),
-                stddev("stop_arrival_delay").alias("std_delay"),
-                mean("stop_arrival_delay_binary").alias("delay_rate"),
-                mean("stop_arrival_delay_significant").alias("significant_delay_rate"),
-            )
-            .orderBy("temp_category")
-        )
-        results["temperature"] = temp_stats
-        logger.log("\nCalculated delay stats by Temperature Category")
-
-    # Stats by wind category
-    if "wind_category" in df.columns and "stop_arrival_delay" in df.columns:
-        wind_stats = (
-            df.groupBy("wind_category")
-            .agg(
-                count("*").alias("count"),
-                mean("stop_arrival_delay").alias("mean_delay"),
-                stddev("stop_arrival_delay").alias("std_delay"),
-                mean("stop_arrival_delay_binary").alias("delay_rate"),
-                mean("stop_arrival_delay_significant").alias("significant_delay_rate"),
-            )
-            .orderBy("wind_category")
-        )
-        results["wind"] = wind_stats
-        logger.log("Calculated delay stats by Wind Category")
-
-    # Stats by precipitation category
-    if "rain_category" in df.columns and "stop_arrival_delay" in df.columns:
-        rain_stats = (
-            df.groupBy("rain_category")
-            .agg(
-                count("*").alias("count"),
-                mean("stop_arrival_delay").alias("mean_delay"),
-                stddev("stop_arrival_delay").alias("std_delay"),
-                mean("stop_arrival_delay_binary").alias("delay_rate"),
-                mean("stop_arrival_delay_significant").alias("significant_delay_rate"),
-            )
-            .orderBy("rain_category")
-        )
-        results["precipitation"] = rain_stats
-        logger.log("Calculated delay stats by Precipitation Category")
-
-    return results
-
-
-def analyze_extreme_weather(df):
-    """Analyze delay patterns during extreme weather conditions."""
-    logger.section("EXTREME WEATHER ANALYSIS")
-
-    results = []
-
-    # Extreme cold (< 0°C) vs Normal (5-20°C)
-    if "T" in df.columns:
-        freezing = df.filter(col("T") < 0)
-        normal_temp = df.filter((col("T") >= 5) & (col("T") <= 20))
-
-        freezing_stats = freezing.agg(
-            mean("stop_arrival_delay").alias("mean_delay"),
-            mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count"),
-        ).collect()[0]
-
-        normal_temp_stats = normal_temp.agg(
-            mean("stop_arrival_delay").alias("mean_delay"),
-            mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count"),
-        ).collect()[0]
-
-        if freezing_stats["count"] > 0:
-            results.append(
-                {
-                    "condition": "Freezing (<0°C)",
-                    "mean_delay": (
-                        float(freezing_stats["mean_delay"])
-                        if freezing_stats["mean_delay"]
-                        else 0.0
-                    ),
-                    "delay_rate_pct": (
-                        float(freezing_stats["delay_rate"]) * 100
-                        if freezing_stats["delay_rate"]
-                        else 0.0
-                    ),
-                    "n_records": int(freezing_stats["count"]),
-                }
-            )
-        if normal_temp_stats["count"] > 0:
-            results.append(
-                {
-                    "condition": "Normal Temp (5-20°C)",
-                    "mean_delay": (
-                        float(normal_temp_stats["mean_delay"])
-                        if normal_temp_stats["mean_delay"]
-                        else 0.0
-                    ),
-                    "delay_rate_pct": (
-                        float(normal_temp_stats["delay_rate"]) * 100
-                        if normal_temp_stats["delay_rate"]
-                        else 0.0
-                    ),
-                    "n_records": int(normal_temp_stats["count"]),
-                }
-            )
-
-    # High wind (> 15 m/s) vs Calm (< 5 m/s)
-    if "FF" in df.columns:
-        high_wind = df.filter(col("FF") > 15)
-        calm = df.filter(col("FF") < 5)
-
-        high_wind_stats = high_wind.agg(
-            mean("stop_arrival_delay").alias("mean_delay"),
-            mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count"),
-        ).collect()[0]
-
-        calm_stats = calm.agg(
-            mean("stop_arrival_delay").alias("mean_delay"),
-            mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count"),
-        ).collect()[0]
-
-        if high_wind_stats["count"] > 0:
-            results.append(
-                {
-                    "condition": "Strong Wind (>15 m/s)",
-                    "mean_delay": (
-                        float(high_wind_stats["mean_delay"])
-                        if high_wind_stats["mean_delay"]
-                        else 0.0
-                    ),
-                    "delay_rate_pct": (
-                        float(high_wind_stats["delay_rate"]) * 100
-                        if high_wind_stats["delay_rate"]
-                        else 0.0
-                    ),
-                    "n_records": int(high_wind_stats["count"]),
-                }
-            )
-        if calm_stats["count"] > 0:
-            results.append(
-                {
-                    "condition": "Calm (<5 m/s)",
-                    "mean_delay": (
-                        float(calm_stats["mean_delay"])
-                        if calm_stats["mean_delay"]
-                        else 0.0
-                    ),
-                    "delay_rate_pct": (
-                        float(calm_stats["delay_rate"]) * 100
-                        if calm_stats["delay_rate"]
-                        else 0.0
-                    ),
-                    "n_records": int(calm_stats["count"]),
-                }
-            )
-
-    # Heavy rain vs No rain
-    if "DR_minutes" in df.columns:
-        heavy_rain = df.filter(col("DR_minutes") > 30)
-        no_rain = df.filter(col("DR_minutes") == 0)
-
-        heavy_rain_stats = heavy_rain.agg(
-            mean("stop_arrival_delay").alias("mean_delay"),
-            mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count"),
-        ).collect()[0]
-
-        no_rain_stats = no_rain.agg(
-            mean("stop_arrival_delay").alias("mean_delay"),
-            mean("stop_arrival_delay_binary").alias("delay_rate"),
-            count("*").alias("count"),
-        ).collect()[0]
-
-        if heavy_rain_stats["count"] > 0:
-            results.append(
-                {
-                    "condition": "Heavy Rain (>30 min/hr)",
-                    "mean_delay": (
-                        float(heavy_rain_stats["mean_delay"])
-                        if heavy_rain_stats["mean_delay"]
-                        else 0.0
-                    ),
-                    "delay_rate_pct": (
-                        float(heavy_rain_stats["delay_rate"]) * 100
-                        if heavy_rain_stats["delay_rate"]
-                        else 0.0
-                    ),
-                    "n_records": int(heavy_rain_stats["count"]),
-                }
-            )
-        if no_rain_stats["count"] > 0:
-            results.append(
-                {
-                    "condition": "No Rain",
-                    "mean_delay": (
-                        float(no_rain_stats["mean_delay"])
-                        if no_rain_stats["mean_delay"]
-                        else 0.0
-                    ),
-                    "delay_rate_pct": (
-                        float(no_rain_stats["delay_rate"]) * 100
-                        if no_rain_stats["delay_rate"]
-                        else 0.0
-                    ),
-                    "n_records": int(no_rain_stats["count"]),
-                }
-            )
-
-    if results:
-        extreme_df = spark.createDataFrame(results)
-        logger.log(f"\nExtreme Weather Impact: {len(results)} conditions analyzed")
-        return extreme_df
 
     return None
 
@@ -701,14 +381,13 @@ def generate_aggregated_data_for_plots(df):
                 count("*").alias("count"),
             )
             .orderBy("ww_bin")
-            
         )
         aggregations["ww_bins"] = weather_code_stats
 
     return aggregations
 
 
-def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path):
+def save_results(corr_df, aggregations, output_path):
     """Save all analysis results to HDFS."""
     logger.section("SAVING RESULTS")
 
@@ -720,22 +399,6 @@ def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path):
         )
         logger.log(f"Saved correlations to: {corr_path}")
 
-    # Save delay stats by category
-    for name, stats_df in delay_stats.items():
-        stats_path = f"{output_path}/delay_stats_{name}"
-        stats_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
-            stats_path
-        )
-        logger.log(f"Saved {name} stats to: {stats_path}")
-
-    # Save extreme weather analysis
-    if extreme_df is not None:
-        extreme_path = f"{output_path}/extreme_weather"
-        extreme_df.coalesce(1).write.mode("overwrite").option("header", True).csv(
-            extreme_path
-        )
-        logger.log(f"Saved extreme weather analysis to: {extreme_path}")
-
     # Save aggregated data for plotting
     for name, agg_df in aggregations.items():
         agg_path = f"{output_path}/aggregated_{name}"
@@ -743,7 +406,7 @@ def save_results(corr_df, delay_stats, extreme_df, aggregations, output_path):
         logger.log(f"Saved aggregated {name} to: {agg_path}")
 
 
-def print_summary_report(corr_df, delay_stats, extreme_df, total_count):
+def print_summary_report(corr_df, total_count):
     """Print a summary report of the analysis."""
     logger.section("WEATHER-DELAY CORRELATION ANALYSIS REPORT")
     logger.log(f"\nDataset: {total_count:,} train service records with weather data")
@@ -826,20 +489,14 @@ if __name__ == "__main__":
                 f"r={row['correlation']:+.4f}"
             )
 
-    # Calculate delay stats by category
-    delay_stats = calculate_delay_stats_by_category(df)
-
-    # Extreme weather analysis
-    extreme_df = analyze_extreme_weather(df)
-
     # Generate aggregated data for visualization
     aggregations = generate_aggregated_data_for_plots(df)
 
     # Save all results
-    save_results(corr_df, delay_stats, extreme_df, aggregations, OUTPUT_PATH)
+    save_results(corr_df, aggregations, OUTPUT_PATH)
 
     # Print summary report
-    print_summary_report(corr_df, delay_stats, extreme_df, total_count)
+    print_summary_report(corr_df, total_count)
 
     logger.section("ANALYSIS COMPLETE")
     logger.log(f"\nAll results saved to: {OUTPUT_PATH}")
