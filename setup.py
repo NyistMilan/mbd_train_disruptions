@@ -1,11 +1,12 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='mbd_train_disruptions',
     version='0.1',
     description='',
     url='',
-    packages=['mbd_train_disruptions'],
+    packages=find_packages(where='src'),
+    package_dir={'': 'src'},
     license='',
     author='Milan Konor Nyist',
     python_requires='',
@@ -17,6 +18,10 @@ setup(
         'pyarrow',
         'fastparquet',
         'aiohttp',
-        'asyncio', 
+        'asyncio',
+        'matplotlib',
+        'seaborn',
+        'scipy',
+        'numpy',
     ]
 )

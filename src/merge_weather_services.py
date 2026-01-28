@@ -2,7 +2,6 @@ from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.functions import broadcast, col, radians, sin, cos, sqrt, atan2
 from pyspark.sql.window import Window
 
-# === Configuration ===
 RAW_BASE = "/user/s3692612/final_project/data/raw"
 MASTER_BASE = "/user/s3692612/final_project/data/master"
 WEATHER_PATH = f"{RAW_BASE}/weather/*"
@@ -10,8 +9,6 @@ STATIONS_PATH = "/user/s3544648/final_project/data/raw/stations_consolidated/*"
 SERVICES_PATH = MASTER_BASE  # Master data is directly here with year partitions
 OUTPUT_PATH = "final_project/data/master/services_with_weather"
 
-# Weather columns to keep (most relevant for delay analysis)
-# Based on actual KNMI data schema
 WEATHER_COLS_TO_KEEP = [
     "station",
     "time",
@@ -19,29 +16,34 @@ WEATHER_COLS_TO_KEEP = [
     "lon",
     "stationname",
     # Temperature
-    "T",  # Air temperature (0.1 °C)
-    "T10N",  # Minimum temperature at 10cm (0.1 °C)
-    "TD",  # Dew point temperature (0.1 °C)
+    "T",  # Air temperature (°C)
+    "T10N",  # Minimum temperature at 10cm (°C)
+    "TD",  # Dew point temperature (°C)
     # Humidity
     "U",  # Relative humidity (%)
-    "RH",  # Relative humidity (alternative)
+    "RH",  # Precipitation amount (mm)
     # Precipitation
-    "DR",  # Precipitation duration (0.1 hour)
+    "DR",  # Precipitation duration (hours)
     # Wind
-    "DD",  # Wind direction (degrees)
-    "FF",  # Mean wind speed (0.1 m/s)
-    "FH",  # Hourly mean wind speed (0.1 m/s)
-    "FX",  # Maximum wind gust (0.1 m/s)
+    "DD",  # Wind direction (degrees, 360=N, 90=E, 180=S, 270=W)
+    "FF",  # Past 10-min mean wind speed (m/s)
+    "FH",  # Hourly mean wind speed (m/s)
+    "FX",  # Maximum wind gust (m/s)
     # Visibility & clouds
-    "VV",  # Visibility (0-49: code, 50-89: km)
-    "N",  # Cloud cover (octants)
+    "VV",  # Visibility code (0-49: 100m steps, 50+: km ranges)
+    "N",  # Cloud cover (okta, 9=sky invisible)
     # Weather phenomena
-    "WW",  # Present weather code
+    "WW",  # Present weather code (WMO 4680)
+    "W1",  # Fog indicator (0/1)
+    "W2",  # Rain indicator (0/1)
+    "W3",  # Snow indicator (0/1)
+    "W5",  # Thunder indicator (0/1)
+    "W6",  # Ice formation indicator (0/1)
     # Pressure
-    "P",  # Air pressure (0.1 hPa)
+    "P",  # Air pressure at sea level (hPa)
     # Sunshine
-    "SQ",  # Sunshine duration (0.1 hour)
-    "Q",  # Global radiation (J/cm2)
+    "SQ",  # Sunshine duration (hours)
+    "Q",  # Global solar radiation (J/cm²)
 ]
 
 spark = (
@@ -56,7 +58,6 @@ spark = (
 
 
 def euclidean_distance_squared(lat1, lon1, lat2, lon2):
-    """Squared Euclidean distance - sufficient for finding nearest station in NL."""
     return (lat1 - lat2) ** 2 + (lon1 - lon2) ** 2
 
 
@@ -90,8 +91,6 @@ stations = (
 )
 
 print("Loading weather data...")
-# Read weather data and keep only relevant columns
-# Use mergeSchema to handle potential schema differences across files
 weather_raw = spark.read.option("mergeSchema", "true").parquet(WEATHER_PATH)
 
 # Filter to only columns that exist in the data
@@ -109,10 +108,6 @@ if "time" in weather.columns:
     if "String" in time_type:
         weather = weather.withColumn("weather_time", F.to_timestamp("time"))
     elif "Long" in time_type:
-        # Long type - likely Unix timestamp in nanoseconds or seconds
-        # Check magnitude to determine unit
-        # Nanoseconds: ~1.7e18 for 2024, Milliseconds: ~1.7e12, Seconds: ~1.7e9
-        # Convert from nanoseconds to seconds, then to timestamp
         weather = weather.withColumn(
             "weather_time",
             F.when(
@@ -124,7 +119,6 @@ if "time" in weather.columns:
             .otherwise(F.from_unixtime(col("time"))),  # seconds
         ).withColumn("weather_time", F.to_timestamp("weather_time"))
     else:
-        # Cast to timestamp to handle other timestamp types
         weather = weather.withColumn("weather_time", col("time").cast("timestamp"))
 else:
     raise ValueError("No 'time' column found in weather data")
@@ -137,7 +131,6 @@ weather = (
     .withColumn("weather_lng", col("lon").cast("double"))
 )
 
-# Get unique weather stations with their coordinates
 weather_stations = (
     weather.select("weather_station", "stationname", "weather_lat", "weather_lng")
     .dropDuplicates(["weather_station"])
@@ -151,7 +144,6 @@ print(f"Found {weather_stations.count()} weather stations")
 # === Step 1: Match train stations to nearest weather stations ===
 print("Matching train stations to nearest weather stations...")
 
-# Cross join to compute all pairwise distances
 station_weather_pairs = stations.crossJoin(broadcast(weather_stations))
 
 # Calculate squared Euclidean distance between each train station and weather station
@@ -284,7 +276,6 @@ services_with_weather.select(
 # === Diagnostics: Check unmatched records ===
 total_count = services_with_weather.count()
 
-# Check if ANY weather column has data (not just T)
 weather_data_condition = (
     col("T").isNotNull()
     | col("FF").isNotNull()
@@ -317,7 +308,6 @@ print(
     f"Records with mapping but no weather: {total_count - with_weather - without_station_mapping - without_date}"
 )
 
-# Sample of services without a date
 print("\nSample of services without stop_event_ts:")
 services_with_weather.filter(col("stop_event_ts").isNull()).select(
     "service_rdt_id",
